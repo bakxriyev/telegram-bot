@@ -20,18 +20,54 @@ export function huzurMenuKeyboard(): InlineKeyboard {
     .text('⬅️ Orqaga', 'admin:back');
 }
 
+/** Manbani chiroyli ko'rinishda: bo'sh/null → (noma'lum). */
+export function displaySource(source: string | null): string {
+  const t = (source ?? '').trim();
+  return t ? t : '(noma’lum)';
+}
+
+/** Manba nomini fayl nomida ishlatish uchun xavfsiz shaklga keltirish. */
+export function safeFilePart(source: string | null): string {
+  const t = (source ?? '').trim().replace(/\s+/g, '_').replace(/[\\/:*?"<>|]/g, '');
+  return (t || 'manba').slice(0, 40);
+}
+
+/** Manba bo'yicha lidlar sonini hisoblash (tartiblangan ro'yxat). */
+function countBySource(rows: { source: string | null }[]): { source: string | null; count: number }[] {
+  const map = new Map<string | null, number>();
+  for (const r of rows) {
+    const s = (r.source ?? '').trim() ? r.source!.trim() : null;
+    map.set(s, (map.get(s) ?? 0) + 1);
+  }
+  return [...map.entries()]
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => {
+      if (a.source == null) return 1;
+      if (b.source == null) return -1;
+      return a.source.localeCompare(b.source);
+    });
+}
+
 export async function buildHuzurEntryText(): Promise<string> {
-  const [leads, counters] = await Promise.all([
-    huzurRepository.countLeads(),
+  const [leadRows, counters] = await Promise.all([
+    huzurRepository.listAllLeadDatesWithSource(),
     huzurRepository.listAllCounters(),
   ]);
   const visits = counters.reduce((s, c) => s + visitValue(c.count), 0);
-  return [
+  const bySource = countBySource(leadRows);
+  const lines = [
     '🌐 Huzur sayti (imanakhmedovna.uz/huzur)',
     '',
-    `📝 Jami lidlar: ${leads}`,
+    `📝 Jami lidlar: ${leadRows.length}`,
     `👁 Jami tashriflar: ${visits}`,
-  ].join('\n');
+  ];
+  if (bySource.length > 0) {
+    lines.push('', '🔗 Manbalar bo‘yicha:');
+    for (const { source, count } of bySource) {
+      lines.push(`   • ${displaySource(source)}: ${count}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 /** counter.count (text) ni songa aylantirish — bo'sh/noto'g'ri = 1 tashrif. */
@@ -77,6 +113,16 @@ function chunkLines(lines: string[]): string[] {
   return chunks;
 }
 
+/** Excel uchun manba tanlash klaviaturasi (indekslar — callback hajmi chegarasi uchun). */
+function excelSourceKeyboard(sources: Array<string | null>): InlineKeyboard {
+  const kb = new InlineKeyboard().text('📥 Barchasi (hammasi birga)', 'admin:huzur:excel:all').row();
+  sources.forEach((s, i) => {
+    kb.text(`📥 ${displaySource(s)}`, `admin:huzur:excel:src:${i}`).row();
+  });
+  kb.text('⬅️ Huzur menyusi', 'admin:huzur');
+  return kb;
+}
+
 export function registerHuzurHandler(bot: Bot<BotContext>): void {
   // Bo'limga kirish
   bot.callbackQuery('admin:huzur', requireAdmin, async (ctx) => {
@@ -89,19 +135,27 @@ export function registerHuzurHandler(bot: Bot<BotContext>): void {
     await ctx.answerCallbackQuery();
   });
 
-  // Statistika: birinchi kundan boshlab to'liq kunlik (Toshkent vaqti)
+  // Statistika: birinchi LID tushgan kundan boshlab to'liq kunlik (Toshkent vaqti)
   bot.callbackQuery('admin:huzur:stats', requireAdmin, async (ctx) => {
     await ctx.answerCallbackQuery({ text: 'Hisoblanmoqda...' });
     try {
-      const [leadDates, counters] = await Promise.all([
-        huzurRepository.listAllLeadDates(),
+      const [leadRows, counters] = await Promise.all([
+        huzurRepository.listAllLeadDatesWithSource(),
         huzurRepository.listAllCounters(),
       ]);
 
       const leadsByDay = new Map<string, number>();
-      for (const d of leadDates) {
-        const key = tashkentDateKey(d);
+      const leadsByDaySource = new Map<string, Map<string | null, number>>();
+      for (const r of leadRows) {
+        const key = tashkentDateKey(r.created_at);
+        const s = (r.source ?? '').trim() ? r.source!.trim() : null;
         leadsByDay.set(key, (leadsByDay.get(key) ?? 0) + 1);
+        let m = leadsByDaySource.get(key);
+        if (!m) {
+          m = new Map();
+          leadsByDaySource.set(key, m);
+        }
+        m.set(s, (m.get(s) ?? 0) + 1);
       }
 
       const visitsByDay = new Map<string, number>();
@@ -111,23 +165,52 @@ export function registerHuzurHandler(bot: Bot<BotContext>): void {
       }
 
       const todayKey = lastTashkentDateKeys(1)[0];
-      const allKeys = [...leadsByDay.keys(), ...visitsByDay.keys()].sort();
-      const firstKey = allKeys.length > 0 ? allKeys[0] : todayKey;
+      const leadKeys = [...leadsByDay.keys()].sort();
+      // Lidlar birinchi lid tushgan kundan hisoblanadi
+      const firstKey =
+        leadKeys.length > 0
+          ? leadKeys[0]
+          : [...visitsByDay.keys()].sort()[0] ?? todayKey;
       const dayKeys = fullDateRange(firstKey, todayKey);
 
       const totalVisits = [...visitsByDay.values()].reduce((s, v) => s + v, 0);
+      const bySource = countBySource(leadRows);
 
       const lines = [
         '🌐 Huzur statistikasi (Toshkent vaqti)',
         '',
-        `📝 Jami lidlar: ${leadDates.length}`,
+        `📝 Jami lidlar: ${leadRows.length}`,
         `👁 Jami tashriflar: ${totalVisits}`,
         '',
         `📅 Birinchi kun: ${firstKey}`,
-        '',
-        'Kunlik (lid / tashrif):',
-        ...dayKeys.map((k) => `${k}: ${leadsByDay.get(k) ?? 0} / ${visitsByDay.get(k) ?? 0}`),
       ];
+      if (bySource.length > 0) {
+        lines.push('', '🔗 Manbalar bo‘yicha:');
+        for (const { source, count } of bySource) {
+          lines.push(`   • ${displaySource(source)}: ${count}`);
+        }
+      }
+      lines.push('', 'Kunlik (lid / tashrif):');
+      lines.push(...dayKeys.map((k) => `${k}: ${leadsByDay.get(k) ?? 0} / ${visitsByDay.get(k) ?? 0}`));
+
+      const daySourceLines: string[] = [];
+      for (const k of dayKeys) {
+        const m = leadsByDaySource.get(k);
+        if (!m || m.size === 0) continue;
+        const parts = [...m.entries()]
+          .sort((a, b) => {
+            if (a[0] == null) return 1;
+            if (b[0] == null) return -1;
+            return a[0].localeCompare(b[0]);
+          })
+          .map(([s, c]) => `${displaySource(s)} ${c}`)
+          .join(', ');
+        daySourceLines.push(`${k}: ${parts}`);
+      }
+      if (daySourceLines.length > 0) {
+        lines.push('', 'Kunlik manba bo‘yicha:');
+        lines.push(...daySourceLines);
+      }
 
       const chunks = chunkLines(lines);
       await ctx.editMessageText(chunks[0], {
@@ -144,28 +227,81 @@ export function registerHuzurHandler(bot: Bot<BotContext>): void {
     }
   });
 
-  // Lidlar Excel
+  // Lidlar Excel — manba tanlash menyusi
   bot.callbackQuery('admin:huzur:excel', requireAdmin, async (ctx) => {
+    try {
+      const [sources, total] = await Promise.all([
+        huzurRepository.listDistinctSources(),
+        huzurRepository.countLeads(),
+      ]);
+      if (total === 0) {
+        await ctx.editMessageText('📝 Hali lidlar yo‘q.', { reply_markup: huzurMenuKeyboard() });
+      } else if (sources.length === 0) {
+        await sendLeadsExcel(ctx, null);
+      } else {
+        await ctx.editMessageText(`📥 Qaysi manbani yuklab olamiz?\n\nJami lidlar: ${total} ta`, {
+          reply_markup: excelSourceKeyboard(sources),
+        });
+      }
+    } catch (err) {
+      logger.error('Failed to open huzur excel menu', { err });
+      await ctx.editMessageText('❌ Ma’lumotni olib bo‘lmadi.', { reply_markup: huzurMenuKeyboard() });
+    }
+    await ctx.answerCallbackQuery();
+  });
+
+  // Lidlar Excel — barchasi birga
+  bot.callbackQuery('admin:huzur:excel:all', requireAdmin, async (ctx) => {
     await ctx.answerCallbackQuery({ text: 'Excel tayyorlanmoqda...' });
     try {
-      const { workbook, sheet } = createLeadsWorkbook();
-      let n = 0;
-      for await (const page of huzurRepository.iterateLeads()) {
-        for (const lead of page) {
-          n += 1;
-          addLeadRow(sheet, n, lead);
-        }
-      }
-      const buffer = await workbookToBuffer(workbook);
-      const fileName = `huzur_lidlar_${lastTashkentDateKeys(1)[0]}.xlsx`;
-      await ctx.replyWithDocument(new InputFile(buffer, fileName), {
-        caption: `📝 Huzur lidlari\n\nJami: ${n} ta`,
-      });
+      await sendLeadsExcel(ctx, undefined);
     } catch (err) {
       logger.error('Failed to export huzur leads excel', { err });
       await ctx.reply('❌ Excel yaratib bo‘lmadi.');
     }
   });
+
+  // Lidlar Excel — bitta manba alohida
+  bot.callbackQuery(/^admin:huzur:excel:src:(\d+)$/, requireAdmin, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: 'Excel tayyorlanmoqda...' });
+    try {
+      const sources = await huzurRepository.listDistinctSources();
+      const idx = Number(ctx.match[1]);
+      const source = sources[idx];
+      if (idx < 0 || idx >= sources.length || source === undefined) {
+        await ctx.reply('❌ Manba topilmadi. Ro‘yxatni yangilab qayta urinib ko‘ring.');
+        return;
+      }
+      await sendLeadsExcel(ctx, source);
+    } catch (err) {
+      logger.error('Failed to export huzur leads excel by source', { err });
+      await ctx.reply('❌ Excel yaratib bo‘lmadi.');
+    }
+  });
+
+  async function sendLeadsExcel(ctx: BotContext, source: string | null | undefined): Promise<void> {
+    const { workbook, sheet } = createLeadsWorkbook();
+    let n = 0;
+    const pages =
+      source === undefined ? huzurRepository.iterateLeads() : huzurRepository.iterateLeadsBySource(source);
+    for await (const page of pages) {
+      for (const lead of page) {
+        n += 1;
+        addLeadRow(sheet, n, lead);
+      }
+    }
+    const buffer = await workbookToBuffer(workbook);
+    const today = lastTashkentDateKeys(1)[0];
+    const fileName =
+      source === undefined
+        ? `huzur_lidlar_${today}.xlsx`
+        : `huzur_lidlar_${safeFilePart(source)}_${today}.xlsx`;
+    const caption =
+      source === undefined
+        ? `📝 Huzur lidlari (barchasi)\n\nJami: ${n} ta`
+        : `📝 Huzur lidlari\n🔗 Manba: ${displaySource(source)}\n\nJami: ${n} ta`;
+    await ctx.replyWithDocument(new InputFile(buffer, fileName), { caption });
+  }
 
   // Lidlar ro'yxati — pagination
   bot.callbackQuery('admin:huzur:recent', requireAdmin, async (ctx) => {
@@ -200,7 +336,9 @@ export function registerHuzurHandler(bot: Bot<BotContext>): void {
       const lines = [`🕒 Lidlar (sahifa ${safePage + 1}/${totalPages}, jami ${total}):`, ''];
       rows.forEach((l, i) => {
         const n = safePage * LEADS_PAGE_SIZE + i + 1;
-        lines.push(`${n}. 👤 ${l.full_name ?? '—'}\n   📞 ${l.phone_number ?? '—'}\n   🕒 ${formatTashkent(l.created_at)}\n`);
+        lines.push(
+          `${n}. 👤 ${l.full_name ?? '—'}\n   📞 ${l.phone_number ?? '—'}\n   🔗 ${displaySource(l.source)}\n   🕒 ${formatTashkent(l.created_at)}\n`,
+        );
       });
 
       const kb = new InlineKeyboard();

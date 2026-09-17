@@ -60,9 +60,10 @@ export function createLeadsWorkbook(): { workbook: ExcelJS.Workbook; sheet: Exce
     { header: 'Sana (Toshkent)', key: 'date', width: 22 },
     { header: 'F.I.Sh', key: 'full_name', width: 30 },
     { header: 'Telefon', key: 'phone', width: 22 },
+    { header: 'Manba', key: 'source', width: 20 },
   ];
   styleHeader(sheet.getRow(1));
-  autosizeColumns(sheet, [6, 22, 30, 22]);
+  autosizeColumns(sheet, [6, 22, 30, 22, 20]);
   return { workbook, sheet };
 }
 
@@ -72,6 +73,7 @@ export function addLeadRow(sheet: ExcelJS.Worksheet, n: number, lead: HuzurLeadR
     date: formatTashkent(lead.created_at),
     full_name: lead.full_name ?? '',
     phone: lead.phone_number ?? '',
+    source: lead.source?.trim() ? lead.source.trim() : '',
   });
 }
 
