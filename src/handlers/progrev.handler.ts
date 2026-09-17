@@ -22,9 +22,9 @@ import {
 } from '../keyboards/progrev.keyboard.js';
 import { backKeyboard } from '../keyboards/admin.keyboard.js';
 import { getAdminState, setAdminState, resetAdminState } from '../state/adminState.js';
-import { detectContentType, extractCaptionOrText, extractFileId, copyToStorage } from '../services/telegram.service.js';
+import { detectContentType, extractCaptionOrText, extractFileId, copyToStorage, deliverStorageMessage } from '../services/telegram.service.js';
 import { env } from '../config/env.js';
-import type { BotContext, SessionData, KeyboardButton, ProgrevMessageRow } from '../types/index.js';
+import type { BotContext, SessionData, KeyboardButton, ProgrevMessageRow, ContentTypeName } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 function progrevItemText(msg: ProgrevMessageRow): string {
@@ -79,6 +79,50 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
 
   bot.callbackQuery(/^admin:progrev:pick:(.+)$/, requireAdmin, async (ctx) => {
     await showProgrevItem(ctx, ctx.match[1], true);
+  });
+
+  // Progrev asl postini ko'rish (userga qanday bor bo'lsa shunday)
+  bot.callbackQuery(/^admin:progrev:view:(.+)$/, requireAdmin, async (ctx) => {
+    const id = ctx.match[1];
+    await ctx.answerCallbackQuery({ text: 'Ochilmoqda...' });
+    if (!ctx.from) return;
+    try {
+      const msg = await progrevRepository.getById(id);
+      if (!msg) {
+        await ctx.reply('❌ Progrev topilmadi.');
+        return;
+      }
+      const now = new Date().toISOString();
+      await ctx.reply(
+        `👁 Ko‘rinish: "${msg.name}"\n⏳ ${formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes)} (startdan keyin)`,
+      );
+      await deliverStorageMessage({
+        api: bot.api,
+        toTelegramId: ctx.from.id,
+        fromChannelId: msg.channel_id,
+        fromMessageId: msg.message_id,
+        capturedCaption: msg.caption_text,
+        capturedContentType: (msg.content_type ?? undefined) as ContentTypeName | undefined,
+        capturedFileId: msg.file_id ?? undefined,
+        capturedKeyboardButtons: msg.keyboard_buttons,
+        user: {
+          id: '',
+          telegram_id: ctx.from.id,
+          username: ctx.from.username ?? null,
+          first_name: ctx.from.first_name ?? null,
+          last_name: ctx.from.last_name ?? null,
+          is_active: true,
+          started_at: now,
+          updated_at: now,
+          created_at: now,
+        },
+      });
+    } catch (err) {
+      logger.error('Failed to preview progrev message', { id, err });
+      await ctx
+        .reply('❌ Ko‘rib bo‘lmadi. Kontent storage kanaldan o‘chgan bo‘lishi mumkin.')
+        .catch(() => undefined);
+    }
   });
 
   bot.callbackQuery(/^admin:progrev:toggle:(.+)$/, requireAdmin, async (ctx) => {

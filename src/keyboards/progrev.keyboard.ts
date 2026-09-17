@@ -24,6 +24,8 @@ export function progrevListKeyboard(messages: ProgrevMessageRow[]): InlineKeyboa
 
 export function progrevItemKeyboard(msg: ProgrevMessageRow): InlineKeyboard {
   const kb = new InlineKeyboard()
+    .text('👁 Ko‘rish', `admin:progrev:view:${msg.id}`)
+    .row()
     .text('✏️ O‘zgartirish', `admin:progrev:edit:${msg.id}`)
     .row()
     .text(msg.is_active ? '⏸ O‘chirish' : '▶️ Yoqish', `admin:progrev:toggle:${msg.id}`)
