@@ -65,6 +65,44 @@ export interface BroadcastRecipientRow {
   created_at: string;
 }
 
+/**
+ * Progrev (drip) xabar — /start bosgan har bir userga UNING start
+ * vaqtidan nisbatan (kun/soat/daqiqa) keyin yuboriladigan post.
+ */
+export interface ProgrevMessageRow {
+  id: string;
+  name: string;
+  channel_id: number;
+  message_id: number;
+  delay_days: number;
+  delay_hours: number;
+  delay_minutes: number;
+  is_active: boolean;
+  keyboard_buttons: KeyboardButton[];
+  caption_text: string | null;
+  content_type: string | null;
+  file_id: string | null;
+  sent_count: number;
+  failed_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProgrevSendStatus = 'pending' | 'sent' | 'failed' | 'cancelled';
+
+/** Bitta userga bitta progrev xabarni qachon yuborish rejasi. */
+export interface ProgrevSendRow {
+  id: string;
+  progrev_id: string;
+  user_id: string;
+  status: ProgrevSendStatus;
+  scheduled_at: string;
+  sent_at: string | null;
+  attempts: number;
+  error_message: string | null;
+  created_at: string;
+}
+
 export type ContentTypeName =
   | 'text'
   | 'photo'
@@ -96,12 +134,29 @@ export interface SessionData {
     | 'waiting_for_broadcast_keyboard_name'
     | 'waiting_for_broadcast_keyboard_url'
     | 'waiting_for_broadcast_keyboard_ask'
-    | 'waiting_for_broadcast_confirmation';
+    | 'waiting_for_broadcast_confirmation'
+    | 'waiting_for_progrev_message'
+    | 'waiting_for_progrev_name'
+    | 'waiting_for_progrev_delay_days'
+    | 'waiting_for_progrev_delay_hours'
+    | 'waiting_for_progrev_delay_minutes'
+    | 'waiting_for_progrev_keyboard_ask'
+    | 'waiting_for_progrev_keyboard_name'
+    | 'waiting_for_progrev_keyboard_url'
+    | 'waiting_for_progrev_edit_name'
+    | 'waiting_for_progrev_edit_days'
+    | 'waiting_for_progrev_edit_hours'
+    | 'waiting_for_progrev_edit_minutes'
+    | 'waiting_for_progrev_edit_message';
   pendingChannelMessage?: PendingChannelMessage;
   editingStartMessageId?: string;
   pendingBroadcastId?: string;
   pendingKeyboardButtons?: KeyboardButton[];
   pendingButtonName?: string;
+  pendingProgrevId?: string;
+  pendingProgrevName?: string;
+  editingProgrevId?: string;
+  pendingProgrevDelay?: { days: number; hours: number; minutes: number };
 }
 
 export type BotContext = Context;

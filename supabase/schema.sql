@@ -177,3 +177,87 @@ alter table settings enable row level security;
 
 -- Policy yaratilmagani uchun anon/authenticated rollar hech narsaga
 -- kira olmaydi. Faqat service_role (RLS'ni bypass qiladi) ishlay oladi.
+
+-- ---------------------------------------------------------
+-- 9. progrev_messages — /start dan keyin interval bilan yuboriladigan
+--    "progrev" (drip) postlar. Har bir user O'ZINING start vaqtidan
+--    nisbatan oladi: scheduled_at = user_start + delay.
+--    Faqat nisbiy vaqt (kun/soat/daqiqa) — aniq sana YO'Q.
+-- ---------------------------------------------------------
+create table if not exists progrev_messages (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  channel_id bigint not null,
+  message_id bigint not null,
+  delay_days integer not null default 0
+    constraint progrev_messages_delay_days_check
+    check (delay_days >= 0 and delay_days <= 365),
+  delay_hours integer not null default 0
+    constraint progrev_messages_delay_hours_check
+    check (delay_hours >= 0 and delay_hours <= 23),
+  delay_minutes integer not null default 0
+    constraint progrev_messages_delay_minutes_check
+    check (delay_minutes >= 0 and delay_minutes <= 59),
+  is_active boolean default true,
+  keyboard_buttons jsonb default '[]'::jsonb,
+  caption_text text,
+  content_type text,
+  file_id text,
+  sent_count integer default 0,
+  failed_count integer default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_progrev_messages_is_active on progrev_messages (is_active);
+create index if not exists idx_progrev_messages_created_at on progrev_messages (created_at);
+
+-- ---------------------------------------------------------
+-- 10. progrev_sends — qaysi userga qaysi progrev qachon yuborilishi.
+--     Bot restart bo'lsa ham yo'qolmaydi: scheduler scheduled_at
+--     o'tgan pending'larni keyingi tick'da yuboradi.
+-- ---------------------------------------------------------
+create table if not exists progrev_sends (
+  id uuid primary key default gen_random_uuid(),
+  progrev_id uuid references progrev_messages(id) on delete cascade,
+  user_id uuid references users(id) on delete cascade,
+  status text default 'pending'
+    constraint progrev_sends_status_check
+    check (status in ('pending', 'sent', 'failed', 'cancelled')),
+  scheduled_at timestamptz not null,
+  sent_at timestamptz,
+  attempts integer default 0,
+  error_message text,
+  created_at timestamptz default now(),
+  constraint uq_progrev_send unique (progrev_id, user_id)
+);
+
+create index if not exists idx_progrev_sends_status_scheduled on progrev_sends (status, scheduled_at);
+create index if not exists idx_progrev_sends_user_id on progrev_sends (user_id);
+create index if not exists idx_progrev_sends_progrev_id on progrev_sends (progrev_id);
+
+drop trigger if exists trg_progrev_messages_updated_at on progrev_messages;
+create trigger trg_progrev_messages_updated_at
+  before update on progrev_messages
+  for each row execute function set_updated_at();
+
+alter table progrev_messages enable row level security;
+alter table progrev_sends enable row level security;
+
+-- ---------------------------------------------------------
+-- 11. Progrev interval o'zgarganda kutilayotgan rejalarni siljitish.
+--     Har bir send uchun: scheduled_at = scheduled_at + delta.
+--     Bitta atomar so'rov — 50 ming qator bo'lsa ham tez.
+-- ---------------------------------------------------------
+create or replace function shift_progrev_pending_schedule(p_progrev_id uuid, p_delta_ms bigint)
+returns integer as $$
+declare
+  v_count integer;
+begin
+  update progrev_sends
+  set scheduled_at = scheduled_at + make_interval(secs => (p_delta_ms::double precision / 1000))
+  where progrev_id = p_progrev_id and status = 'pending';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$ language plpgsql security definer;

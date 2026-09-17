@@ -1,6 +1,7 @@
 import type { Bot } from 'grammy';
 import { broadcastsRepository } from '../database/repositories/broadcasts.repository.js';
 import { broadcastService } from './broadcast.service.js';
+import { progrevService } from './progrev.service.js';
 import { env } from '../config/env.js';
 import { formatTashkent } from '../utils/schedule.js';
 import { logger } from '../utils/logger.js';
@@ -25,8 +26,7 @@ async function tick(bot: Bot<BotContext>): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
   try {
-    const due = await broadcastsRepository.listDueScheduled(10);
-    for (const b of due) {
+    const due = await broadcastsRepository.listDueScheduled(10);    for (const b of due) {
       logger.info('Running scheduled broadcast', { broadcastId: b.id, scheduled_at: b.scheduled_at });
       try {
         await broadcastService.run(bot, b.id);
@@ -42,6 +42,14 @@ async function tick(bot: Bot<BotContext>): Promise<void> {
       } catch (err) {
         logger.error('Scheduled broadcast run failed', { broadcastId: b.id, err });
       }
+    }
+
+    // Progrev (drip): vaqti kelgan shaxsiy rejalarni yuborish.
+    // Hamma holat DB'da — bot restart bo'lsa ham o'tkazib yuborilganlar ketadi.
+    try {
+      await progrevService.processDue(bot, 50);
+    } catch (err) {
+      logger.error('Progrev tick failed', { err });
     }
   } catch (err) {
     logger.error('Scheduler tick failed', { err });

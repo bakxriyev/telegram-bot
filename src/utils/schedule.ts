@@ -87,3 +87,23 @@ export function lastTashkentDateKeys(n: number): string[] {
   }
   return keys;
 }
+
+/**
+ * Progrev jimjitlik vaqti (Toshkent vaqti bilan).
+ * 22:00 dan 08:00 gacha progrev xabar yuborilmaydi —
+ * to'planganlari 08:00 bo'lishi bilan ketadi.
+ */
+export const QUIET_HOURS_START = 22;
+export const QUIET_HOURS_END = 8;
+
+/** Berilgan paytdagi Toshkent soati (0–23). */
+export function tashkentHour(date: Date | string | number = new Date()): number {
+  const tash = new Date(new Date(date).getTime() + TASHKENT_OFFSET_MS);
+  return tash.getUTCHours();
+}
+
+/** Hozir jimjitlik vaqti ichidami (22:00–08:00)? */
+export function isTashkentQuietHours(date: Date | string | number = new Date()): boolean {
+  const h = tashkentHour(date);
+  return h >= QUIET_HOURS_START || h < QUIET_HOURS_END;
+}

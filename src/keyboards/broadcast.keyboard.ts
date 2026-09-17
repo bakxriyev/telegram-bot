@@ -4,6 +4,8 @@ export function broadcastMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
     .text('➕ Yangi broadcast', 'admin:broadcast:add')
     .row()
+    .text('🔥 Progrev xabarlar', 'admin:progrev')
+    .row()
     .text('📋 Broadcast tarixi', 'admin:broadcast:list')
     .row()
     .text('⬅️ Orqaga', 'admin:back');

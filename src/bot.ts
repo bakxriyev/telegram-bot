@@ -10,6 +10,7 @@ import { registerUsersHandler } from './handlers/users.handler.js';
 import { registerStatisticsHandler } from './handlers/statistics.handler.js';
 import { registerStartMessagesHandler } from './handlers/startMessages.handler.js';
 import { registerBroadcastsHandler } from './handlers/broadcasts.handler.js';
+import { registerProgrevHandler } from './handlers/progrev.handler.js';
 import { registerHuzurHandler } from './handlers/huzur.handler.js';
 import { registerStorageCaptureHandler } from './handlers/storageCapture.handler.js';
 
@@ -28,6 +29,7 @@ export function createBot(): Bot<BotContext> {
   registerUsersHandler(bot);
   registerStatisticsHandler(bot);
   registerBroadcastsHandler(bot);
+  registerProgrevHandler(bot);
   registerHuzurHandler(bot);
   registerStartMessagesHandler(bot);
 

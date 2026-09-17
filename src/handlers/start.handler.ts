@@ -1,6 +1,7 @@
 import { Bot } from 'grammy';
 import { userService } from '../services/user.service.js';
 import { startMessageService } from '../services/startMessage.service.js';
+import { progrevService } from '../services/progrev.service.js';
 import type { BotContext, UserRow } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
@@ -30,6 +31,15 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
     // 2) Bazaga yozuv orqa fonda — javob tezligiga ta'sir qilmaydi.
     // Ichida retry bor, hech qachon throw qilmaydi.
     void userService.registerOrUpdateBackground({
+      id: from.id,
+      username: from.username,
+      first_name: from.first_name,
+      last_name: from.last_name,
+    });
+
+    // 3) Progrev rejasi ham orqa fonda — userning SHU start vaqtidan
+    // nisbatan aktiv progrev xabarlar rejalanadi. Ichida throw yo'q.
+    void progrevService.scheduleForStart({
       id: from.id,
       username: from.username,
       first_name: from.first_name,
