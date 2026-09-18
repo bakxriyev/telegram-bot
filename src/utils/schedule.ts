@@ -107,3 +107,29 @@ export function isTashkentQuietHours(date: Date | string | number = new Date()):
   const h = tashkentHour(date);
   return h >= QUIET_HOURS_START || h < QUIET_HOURS_END;
 }
+
+/**
+ * Berilgan `nowMs` ni o'z ichiga olgan Toshkent kunining 08:00 ni
+ * UTC millisekund sifatida qaytaradi.
+ * Masalan now = 2026-01-02 15:00 (Toshkent) → 2026-01-02 08:00 (Toshkent) ning UTC ms.
+ */
+export function tashkentMorning8Ms(nowMs: number = Date.now()): number {
+  const tashNow = new Date(nowMs + TASHKENT_OFFSET_MS);
+  const y = tashNow.getUTCFullYear();
+  const mo = tashNow.getUTCMonth();
+  const d = tashNow.getUTCDate();
+  return Date.UTC(y, mo, d, QUIET_HOURS_END, 0) - TASHKENT_OFFSET_MS;
+}
+
+/**
+ * Agar `ms` jimjitlik ichida bo'lsa (22:00–08:00 Toshkent),
+ * uni keyingi 08:00 ga suradi. Kunduzi (08:00–22:00) bo'lsa — o'zgarishsiz qaytaradi.
+ * - 00:00–08:00 → shu kun 08:00
+ * - 22:00–24:00 → ertangi kun 08:00
+ */
+export function skipTashkentQuietForward(ms: number): number {
+  if (!isTashkentQuietHours(ms)) return ms;
+  const morning8 = tashkentMorning8Ms(ms);
+  if (ms < morning8) return morning8;
+  return morning8 + 24 * 60 * 60 * 1000;
+}

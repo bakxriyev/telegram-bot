@@ -2,7 +2,7 @@ import type { Bot } from 'grammy';
 import { progrevRepository } from '../database/repositories/progrev.repository.js';
 import { usersRepository } from '../database/repositories/users.repository.js';
 import { safeDeliver } from './telegram.service.js';
-import { isTashkentQuietHours } from '../utils/schedule.js';
+import { isTashkentQuietHours, skipTashkentQuietForward, tashkentMorning8Ms } from '../utils/schedule.js';
 import { DatabaseError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type { ContentTypeName, ProgrevMessageRow, UserRow } from '../types/index.js';
@@ -50,6 +50,104 @@ function isUniqueViolation(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Tunda to'plangan zanjirni yoyish (burst oldini olish).
+ * `due` — shu tick'da due bo'lganlar (limit bilan kesilgan bo'lishi mumkin).
+ * Har bir user uchun DB dagi BARCHA pending'lar olinadi va:
+ * - birinchisi (navbati kelgani) hozir (`nowMs`) qoldiriladi,
+ * - qolganlari original intervallar saqlangan holda suriladi,
+ * - hech biri 22:00–08:00 ga tushmaydi (tushsa keyingi 08:00 ga).
+ *
+ * Qaytaradi: shu tick'da yuborilmasligi kerak bo'lgan (kelajakka surilgan)
+ * send id'lar to'plami. Bu bazadagi eski to'planib qolganlarga ham ishlaydi —
+ * keyingi kunduzgi tick'da avtomatik to'g'rilanadi.
+ */
+async function reflowQuietBlockedChains(
+  due: { id: string; user_id: string; scheduled_at: string }[],
+  nowMs: number,
+): Promise<Set<string>> {
+  const pushedToFuture = new Set<string>();
+  if (due.length === 0) return pushedToFuture;
+
+  const morning8Ms = tashkentMorning8Ms(nowMs);
+  const userIds = [...new Set(due.map((s) => s.user_id))];
+
+  for (const userId of userIds) {
+    let allSends;
+    try {
+      allSends = await progrevRepository.listSendsByUser(userId);
+    } catch (err) {
+      logger.error('Reflow: failed to list sends by user', {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    const pending = allSends
+      .filter((s) => s.status === 'pending')
+      .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime());
+
+    if (pending.length <= 1) continue;
+
+    const dueForUser = pending.filter((s) => new Date(s.scheduled_at).getTime() <= nowMs);
+    if (dueForUser.length === 0) continue;
+
+    const earliestMs = new Date(dueForUser[0].scheduled_at).getTime();
+
+    // Reflow kerakmi?
+    // - 2+ ta due to'planib qolgan → burst bo'lmasligi uchun shart.
+    // - bitta due tunda qolgan (bugungi 08:00 dan oldin) + kelajak bor →
+    //   interval saqlanishi uchun kelajakni surish kerak.
+    const needsReflow = dueForUser.length > 1 || earliestMs < morning8Ms;
+    if (!needsReflow) continue;
+
+    const shiftMs = nowMs - earliestMs;
+    if (shiftMs <= 0) continue;
+
+    let prevOldMs: number | null = null;
+    let prevNewMs: number | null = null;
+    let shiftedCount = 0;
+
+    for (const send of pending) {
+      const oldMs = new Date(send.scheduled_at).getTime();
+      let candidate = oldMs + shiftMs;
+      if (prevOldMs !== null && prevNewMs !== null) {
+        const minByGap = prevNewMs + (oldMs - prevOldMs);
+        if (candidate < minByGap) candidate = minByGap;
+      }
+      candidate = skipTashkentQuietForward(candidate);
+
+      if (candidate !== oldMs) {
+        try {
+          await progrevRepository.rescheduleSend(send.id, new Date(candidate).toISOString());
+          shiftedCount++;
+        } catch (err) {
+          logger.error('Reflow: failed to reschedule send', {
+            sendId: send.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // Xatolikda zanjir buzilmasligi uchun prev ni eski qiymatda qoldiramiz
+          prevOldMs = oldMs;
+          prevNewMs = oldMs;
+          continue;
+        }
+      }
+
+      if (candidate > nowMs) pushedToFuture.add(send.id);
+
+      prevOldMs = oldMs;
+      prevNewMs = candidate;
+    }
+
+    if (shiftedCount > 0) {
+      logger.info('Progrev reflowed after quiet hours', { userId, shifted: shiftedCount });
+    }
+  }
+
+  return pushedToFuture;
+}
+
 export const progrevService = {
   /**
    * /start bosilganda chaqiriladi — userning O'Z anchor vaqtidan
@@ -83,10 +181,29 @@ export const progrevService = {
       const anchorMs = Date.now();
       const existingByProgrev = new Map(existingSends.map((s) => [s.progrev_id, s]));
 
+      // Zanjir tartibida (delay o'sishi bo'yicha — listActive allaqachon
+      // shunday saralaydi): har bir keyingi xabar oldingisidan kamida
+      // original interval (delay farqi) keyin bo'lishi shart va hech biri
+      // 22:00–08:00 jimjitlikka tushmasligi shart.
+      // Masalan start 22:00, delaylar 3s/6s/9s bo'lsa:
+      // naive 01:00/04:00/07:00 (hammasi quiet) →
+      // 08:00 / 11:00 / 14:00 bo'ladi, burst bo'lmaydi.
+      let prevDelayMs: number | null = null;
+      let prevScheduledMs: number | null = null;
+
       for (const msg of activeMessages) {
-        const scheduledAt = new Date(
-          anchorMs + progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes),
-        ).toISOString();
+        const delayMs = progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes);
+        let scheduledMs = anchorMs + delayMs;
+        if (prevScheduledMs !== null && prevDelayMs !== null) {
+          const minByGap = prevScheduledMs + (delayMs - prevDelayMs);
+          if (scheduledMs < minByGap) scheduledMs = minByGap;
+        }
+        scheduledMs = skipTashkentQuietForward(scheduledMs);
+        // Gap tufayli oldinga surilganda quiet'ga tushib qolsa (masalan
+        // 08:00 + 20s = 04:00 ertasi kuni) — yana 08:00 ga suramiz.
+        // skipTashkentQuietForward idempotent, bir marta yetadi.
+
+        const scheduledAt = new Date(scheduledMs).toISOString();
         const existing = existingByProgrev.get(msg.id);
         try {
           if (!existing) {
@@ -103,6 +220,9 @@ export const progrevService = {
           // Poyga holati (ikki /start bir vaqtda): dublikatni e'tiborsiz qoldiramiz
           if (!isUniqueViolation(err)) throw err;
         }
+
+        prevDelayMs = delayMs;
+        prevScheduledMs = scheduledMs;
       }
 
       logger.info('Progrev scheduled for user', {
@@ -150,6 +270,9 @@ export const progrevService = {
             scheduledMs = nowMs + 60 * 1000;
           }
 
+          // Tunda tushsa — ertangi 08:00 ga suramiz (bitta xabar, zanjir yo'q).
+          scheduledMs = skipTashkentQuietForward(scheduledMs);
+
           const scheduledAt = new Date(scheduledMs).toISOString();
 
           if (!existing) {
@@ -188,7 +311,12 @@ export const progrevService = {
    * Bot restart bo'lsa ham o'tkazib yuborilganlar keyingi tick'da ketadi.
    *
    * QOIDA: 22:00–08:00 (Toshkent) jimjitlik — bu vaqtda hech narsa
-   * yuborilmaydi, to'planganlar 08:00 bo'lishi bilan ketadi.
+   * yuborilmaydi. Tunda to'planganlar 08:00 da BURST bo'lib ketmaydi:
+   * navbati kelgani (eng erta due) hozir yuboriladi, qolganlari original
+   * intervallar saqlangan holda 08:00 dan hisoblab suriladi.
+   * Masalan delaylar 3s/6s/9s bo'lsa → 08:00 / 11:00 / 14:00.
+   * Bu bazada oldindan to'planib qolganlarga ham ishlaydi (keyingi
+   * kunduzgi tick'da avtomatik reflow).
    */
   async processDue(
     bot: Bot,
@@ -211,6 +339,8 @@ export const progrevService = {
       return result;
     }
 
+    const nowMs = Date.now();
+
     let due;
     try {
       due = await progrevRepository.listDueSends(limit);
@@ -219,6 +349,19 @@ export const progrevService = {
         error: err instanceof Error ? err.message : String(err),
       });
       return result;
+    }
+
+    // Tunda to'plangan zanjirlarni yoyish (burst oldini olish).
+    // Har bir user uchun: birinchisi hozir, qolganlari interval bilan.
+    try {
+      const pushedToFuture = await reflowQuietBlockedChains(due, nowMs);
+      if (pushedToFuture.size > 0) {
+        due = due.filter((s) => !pushedToFuture.has(s.id));
+      }
+    } catch (err) {
+      logger.error('Progrev reflow failed (sending without reflow)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     for (const send of due) {
