@@ -119,7 +119,8 @@ export const progrevService = {
 
   /**
    * Yangi progrev qo'shilganda — barcha AKTIV userlarga shu progrev uchun
-   * reja yaratadi. Avval /start bosmagan userlarga ham boradi.
+   * reja yaratadi. Har bir user uchun: started_at + delay hisoblanadi.
+   * Agar vaqt o'tib ketgan bo'lsa (started_at + delay < now) → hozir yuboriladi.
    * Ichida throw yo'q — xatolik log qilinadi.
    */
   async scheduleForAllActiveUsers(progrevId: string): Promise<{ scheduled: number }> {
@@ -128,24 +129,33 @@ export const progrevService = {
       const msg = await progrevRepository.getById(progrevId);
       if (!msg || !msg.is_active) return { scheduled: 0 };
 
-      const activeUserIds = await usersRepository.listAllActiveUserIds();
-      if (activeUserIds.length === 0) return { scheduled: 0 };
+      const activeUsers = await usersRepository.listAllActiveUsersForSchedule();
+      if (activeUsers.length === 0) return { scheduled: 0 };
 
       const existingSends = await progrevRepository.listSendsByProgrev(progrevId);
       const existingByUser = new Map(existingSends.map((s) => [s.user_id, s]));
 
-      const anchorMs = Date.now();
-      const scheduledAt = new Date(
-        anchorMs + progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes),
-      ).toISOString();
+      const delayMs = progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes);
+      const nowMs = Date.now();
 
-      for (const userId of activeUserIds) {
-        const existing = existingByUser.get(userId);
+      for (const user of activeUsers) {
+        const existing = existingByUser.get(user.id);
         try {
+          // Har bir user uchun: started_at + delay
+          const userStartedMs = new Date(user.started_at).getTime();
+          let scheduledMs = userStartedMs + delayMs;
+
+          // Agar vaqt o'tib ketgan bo'lsa → hozir + 1 daqiqa (tez orada yuborilishi uchun)
+          if (scheduledMs <= nowMs) {
+            scheduledMs = nowMs + 60 * 1000;
+          }
+
+          const scheduledAt = new Date(scheduledMs).toISOString();
+
           if (!existing) {
             await progrevRepository.insertSend({
               progrev_id: progrevId,
-              user_id: userId,
+              user_id: user.id,
               scheduled_at: scheduledAt,
             });
             scheduled++;
@@ -161,7 +171,7 @@ export const progrevService = {
 
       logger.info('Progrev scheduled for all active users', {
         progrevId,
-        activeUsers: activeUserIds.length,
+        activeUsers: activeUsers.length,
         scheduled,
       });
     } catch (err) {

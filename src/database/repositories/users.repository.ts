@@ -104,6 +104,29 @@ export const usersRepository = {
     return ids;
   },
 
+  /** Barcha active userlarning ID va started_at larini qaytaradi (progrev schedule uchun). */
+  async listAllActiveUsersForSchedule(): Promise<{ id: string; started_at: string }[]> {
+    const rows: { id: string; started_at: string }[] = [];
+    let from = 0;
+    for (;;) {
+      const to = from + PAGE_SIZE - 1;
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, started_at')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .range(from, to);
+
+      if (error) throw new DatabaseError('Failed to list active users for schedule', error);
+      const page = (data as { id: string; started_at: string }[]) ?? [];
+      if (page.length === 0) break;
+      for (const r of page) rows.push(r);
+      if (page.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+    return rows;
+  },
+
   /** Bir nechta userni bitta so'rovda aktiv/noaktiv qilish (broadcast tozalash uchun). */
   async setManyActive(userIds: string[], isActive: boolean): Promise<void> {
     if (userIds.length === 0) return;
