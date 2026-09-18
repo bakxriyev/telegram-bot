@@ -191,6 +191,14 @@ export const progrevRepository = {
     return (data as ProgrevSendRow[]) ?? [];
   },
 
+  /** Bitta progrev uchun barcha send'lar (yangi progrev schedule uchun). */
+  async listSendsByProgrev(progrevId: string): Promise<ProgrevSendRow[]> {
+    const { data, error } = await supabase.from('progrev_sends').select('*').eq('progrev_id', progrevId);
+
+    if (error) throw new DatabaseError(`Failed to list progrev sends for progrev ${progrevId}`, error);
+    return (data as ProgrevSendRow[]) ?? [];
+  },
+
   async insertSend(input: { progrev_id: string; user_id: string; scheduled_at: string }): Promise<void> {
     const { error } = await supabase.from('progrev_sends').insert({
       progrev_id: input.progrev_id,

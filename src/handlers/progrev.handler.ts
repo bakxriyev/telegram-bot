@@ -133,9 +133,18 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         await ctx.answerCallbackQuery({ text: 'Topilmadi', show_alert: true });
         return;
       }
-      await progrevRepository.setActive(id, !msg.is_active);
-      await ctx.answerCallbackQuery({ text: !msg.is_active ? '✅ Yoqildi' : '⏸ O‘chirildi' });
-      await showProgrevItem(ctx, id, true);
+      const newActive = !msg.is_active;
+      await progrevRepository.setActive(id, newActive);
+
+      // Yoqilganda — barcha active userlarga reja yaratish
+      let scheduledInfo = '';
+      if (newActive) {
+        const { scheduled } = await progrevService.scheduleForAllActiveUsers(id);
+        scheduledInfo = `\n👥 ${scheduled} ta userga reja yaratildi`;
+      }
+
+      await ctx.answerCallbackQuery({ text: newActive ? '✅ Yoqildi' : '⏸ O\'chirildi' });
+      await showProgrevItem(ctx, id, true, scheduledInfo);
     } catch (err) {
       logger.error('Failed to toggle progrev message', { id, err });
       await ctx.answerCallbackQuery({ text: 'Xatolik', show_alert: true });
@@ -684,12 +693,16 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         file_id: stored.fileId,
       });
       resetAdminState(ctx.from.id);
+
+      // Yangi progrev — barcha active userlarga reja yaratish
+      const { scheduled } = await progrevService.scheduleForAllActiveUsers(created.id);
+
       const text =
         `✅ Progrev saqlandi!\n\n` +
         `🔥 ${created.name}\n` +
         `⏳ ${formatProgrevDelay(delay.days, delay.hours, delay.minutes)} (startdan keyin)\n` +
         `🟢 Aktiv\n\n` +
-        `Endi /start bosgan har bir userga shu vaqtda avtomatik boradi.`;
+        `👥 ${scheduled} ta active userga reja yaratildi.`;
       if (ctx.callbackQuery) {
         await ctx.editMessageText(text, { reply_markup: progrevItemKeyboard(created) });
       } else {
@@ -727,17 +740,18 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
     await ctx.answerCallbackQuery();
   }
 
-  async function showProgrevItem(ctx: BotContext, id: string, viaEdit: boolean): Promise<void> {
+  async function showProgrevItem(ctx: BotContext, id: string, viaEdit: boolean, scheduledInfo = ''): Promise<void> {
     try {
       const msg = await progrevRepository.getById(id);
       if (!msg) {
         await ctx.answerCallbackQuery({ text: 'Topilmadi', show_alert: true });
         return;
       }
+      const text = progrevItemText(msg) + scheduledInfo;
       if (viaEdit) {
-        await ctx.editMessageText(progrevItemText(msg), { reply_markup: progrevItemKeyboard(msg) });
+        await ctx.editMessageText(text, { reply_markup: progrevItemKeyboard(msg) });
       } else {
-        await ctx.reply(progrevItemText(msg), { reply_markup: progrevItemKeyboard(msg) });
+        await ctx.reply(text, { reply_markup: progrevItemKeyboard(msg) });
       }
     } catch (err) {
       logger.error('Failed to show progrev message', { id, err });

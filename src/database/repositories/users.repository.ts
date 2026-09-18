@@ -81,6 +81,29 @@ export const usersRepository = {
     if (error) throw new DatabaseError(`Failed to update user ${userId} active state`, error);
   },
 
+  /** Barcha active userlarning ID larini qaytaradi (progrev schedule uchun). */
+  async listAllActiveUserIds(): Promise<string[]> {
+    const ids: string[] = [];
+    let from = 0;
+    for (;;) {
+      const to = from + PAGE_SIZE - 1;
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+        .range(from, to);
+
+      if (error) throw new DatabaseError('Failed to list active user IDs', error);
+      const rows = (data as { id: string }[]) ?? [];
+      if (rows.length === 0) break;
+      for (const r of rows) ids.push(r.id);
+      if (rows.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+    return ids;
+  },
+
   /** Bir nechta userni bitta so'rovda aktiv/noaktiv qilish (broadcast tozalash uchun). */
   async setManyActive(userIds: string[], isActive: boolean): Promise<void> {
     if (userIds.length === 0) return;

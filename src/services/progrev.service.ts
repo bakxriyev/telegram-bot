@@ -118,6 +118,62 @@ export const progrevService = {
   },
 
   /**
+   * Yangi progrev qo'shilganda — barcha AKTIV userlarga shu progrev uchun
+   * reja yaratadi. Avval /start bosmagan userlarga ham boradi.
+   * Ichida throw yo'q — xatolik log qilinadi.
+   */
+  async scheduleForAllActiveUsers(progrevId: string): Promise<{ scheduled: number }> {
+    let scheduled = 0;
+    try {
+      const msg = await progrevRepository.getById(progrevId);
+      if (!msg || !msg.is_active) return { scheduled: 0 };
+
+      const activeUserIds = await usersRepository.listAllActiveUserIds();
+      if (activeUserIds.length === 0) return { scheduled: 0 };
+
+      const existingSends = await progrevRepository.listSendsByProgrev(progrevId);
+      const existingByUser = new Map(existingSends.map((s) => [s.user_id, s]));
+
+      const anchorMs = Date.now();
+      const scheduledAt = new Date(
+        anchorMs + progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes),
+      ).toISOString();
+
+      for (const userId of activeUserIds) {
+        const existing = existingByUser.get(userId);
+        try {
+          if (!existing) {
+            await progrevRepository.insertSend({
+              progrev_id: progrevId,
+              user_id: userId,
+              scheduled_at: scheduledAt,
+            });
+            scheduled++;
+          } else if (existing.status === 'pending') {
+            await progrevRepository.rescheduleSend(existing.id, scheduledAt);
+            scheduled++;
+          }
+          // sent/failed/cancelled — tegilmaydi
+        } catch (err) {
+          if (!isUniqueViolation(err)) throw err;
+        }
+      }
+
+      logger.info('Progrev scheduled for all active users', {
+        progrevId,
+        activeUsers: activeUserIds.length,
+        scheduled,
+      });
+    } catch (err) {
+      logger.error('Failed to schedule progrev for all active users', {
+        progrevId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return { scheduled };
+  },
+
+  /**
    * Vaqti kelgan progrev'larni yuboradi. Scheduler har tick'da chaqiradi.
    * Bot restart bo'lsa ham o'tkazib yuborilganlar keyingi tick'da ketadi.
    *
