@@ -4,7 +4,20 @@ import type { UserRow, StartMessageRow, ContentTypeName } from '../types/index.j
 import { deliverStorageMessage } from './telegram.service.js';
 import { logger } from '../utils/logger.js';
 
+/** Ketma-ket yuborishda xabarlar orasidagi pauza (tartib kafolati uchun). */
+const SEND_GAP_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export const startMessageService = {
+  /**
+   * Aktiv start xabarlarni KETMA-KETLIKDA yuboradi (activated_at tartibida).
+   * Parallel yuborilsa Telegram tartibni kafolatlamaydi — shuning uchun
+   * har birini await qilib, orasida kichik pauza bilan jo'natamiz.
+   * Bitta xabar xato bersa ham qolganlari to'xtamaydi.
+   */
   async deliverActiveStartMessage(bot: Bot, user: UserRow): Promise<void> {
     const activeMessages = await startMessagesRepository.listActiveOrdered();
 
@@ -16,16 +29,19 @@ export const startMessageService = {
       return;
     }
 
-    const deliveries = activeMessages.map((msg) =>
-      startMessageService.deliverSingleMessage(bot, user, msg).catch((err) => {
+    for (let i = 0; i < activeMessages.length; i++) {
+      const msg = activeMessages[i];
+      try {
+        await startMessageService.deliverSingleMessage(bot, user, msg);
+      } catch (err) {
         logger.error('Failed to deliver a start message', {
           telegram_id: user.telegram_id,
           start_message_id: msg.id,
           error: err instanceof Error ? err.message : String(err),
         });
-      }),
-    );
-    await Promise.allSettled(deliveries);
+      }
+      if (i < activeMessages.length - 1) await sleep(SEND_GAP_MS);
+    }
   },
 
   async deliverSingleMessage(bot: Bot, user: UserRow, msg: StartMessageRow): Promise<void> {
