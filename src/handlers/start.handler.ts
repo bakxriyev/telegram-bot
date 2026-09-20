@@ -24,6 +24,16 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
     //  c) linkda hech narsa bo'lmasa (oddiy /start) → userning ESKI
     //     sourceni bazadan olamiz, VSL user instagramga o'tib ketmasligi uchun.
     //     Yangi user bo'lsa → 'instagram'.
+    // 0) Source ni aniqlash — 3 holat:
+    //  a) linkda vsl/vsl1..vslN bo'lsa → 'vsl' (VSL oqim, bazaga yoziladi)
+    //  b) linkda instagram bo'lsa → 'instagram' (Instagram oqim, bazaga yoziladi)
+    //  c) oddiy parametrsiz /start bo'lsa → userning ESKI guruhi saqlanadi:
+    //     VSL odam VSLligicha qoladi (instagramga o'tib ketmaydi),
+    //     Instagram odam Instagramligicha qoladi.
+    //     Faqat mutlaqo yangi odam → 'instagram'.
+    // Xom parametr ('vsl1', 'instagram', null) alohida saqlanadi —
+    // Excel'da qaysi linkdan kelgani ko'rinadi.
+    const rawParam = (ctx.match ?? '').trim().toLowerCase() || null;
     const payloadSource = extractSourceFromStartPayload(ctx.match);
     let finalSource: SourceType;
     if (payloadSource) {
@@ -41,7 +51,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       }
     }
 
-    logger.info('/start received', { telegram_id: from.id, source: finalSource });
+    logger.info('/start received', { telegram_id: from.id, source: finalSource, param: rawParam });
 
     // 1) DB yozuvini KUTMASDAN — darhol start xabarni yuboramiz.
     // Shaxsiylashtirish ({name}) uchun Telegram'dan kelgan ma'lumot yetadi.
@@ -57,6 +67,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       updated_at: now,
       created_at: now,
       source: finalSource,
+      start_param: rawParam,
     };
     await startMessageService.deliverActiveStartMessage(bot, previewUser);
 
@@ -68,6 +79,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       first_name: from.first_name,
       last_name: from.last_name,
       source: finalSource,
+      startParam: rawParam,
     });
 
     // 3) Progrev rejasi ham orqa fonda — userning SHU start vaqtidan

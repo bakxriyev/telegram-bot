@@ -15,6 +15,7 @@ export interface ProgrevDueSend extends ProgrevSendRow {
     updated_at: string;
     created_at: string;
     source: SourceType | null;
+    start_param: string | null;
   };
 }
 

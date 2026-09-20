@@ -294,3 +294,9 @@ create index if not exists idx_progrev_messages_source on progrev_messages (sour
 update users set source = 'vsl' where lower(source) like 'vsl%';
 update start_messages set source = 'vsl' where lower(source) like 'vsl%';
 update progrev_messages set source = 'vsl' where lower(source) like 'vsl%';
+
+-- ---------------------------------------------------------
+-- 14. Qaysi linkdan kirgani (xom parametr): vsl1, instagram yoki
+--     oddiy /start (null). Statistikada "to'g'ridan-to'g'ri" shundan sanaladi.
+-- ---------------------------------------------------------
+alter table users add column if not exists start_param text;

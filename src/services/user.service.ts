@@ -24,6 +24,8 @@ export function groupLabel(g: SourceGroup): string {
   return '❓ Nomaʼlum';
 }
 
+
+
 export interface SourceStats {
   total: number;
   active: number;
@@ -71,6 +73,7 @@ export const userService = {
     first_name?: string;
     last_name?: string;
     source?: SourceType | null;
+    startParam?: string | null;
   }): Promise<UserRow> {
     const user = await usersRepository.upsertByTelegramId({
       telegram_id: from.id,
@@ -78,6 +81,7 @@ export const userService = {
       first_name: from.first_name ?? null,
       last_name: from.last_name ?? null,
       source: from.source ?? null,
+      startParam: from.startParam,
     });
     logger.info('User registered/updated', { telegram_id: from.id, source: from.source });
     return user;
@@ -94,6 +98,7 @@ export const userService = {
     first_name?: string;
     last_name?: string;
     source?: SourceType | null;
+    startParam?: string | null;
   }): Promise<void> {
     const delays = [0, 2000, 5000];
     for (let attempt = 0; attempt < delays.length; attempt++) {
@@ -105,6 +110,7 @@ export const userService = {
           first_name: from.first_name ?? null,
           last_name: from.last_name ?? null,
           source: from.source ?? null,
+          startParam: from.startParam,
         });
         if (attempt > 0) {
           logger.info('Background user upsert succeeded on retry', {

@@ -21,6 +21,12 @@ export interface UserRow {
   updated_at: string;
   created_at: string;
   source: SourceType | null;
+  /**
+   * Oxirgi /start dagi xom parametr (masalan 'vsl1', 'instagram').
+   * Oddiy (parametrsiz) /start da NULL bo'ladi — "to'g'ridan-to'g'ri"
+   * kelganlarni sanash uchun.
+   */
+  start_param: string | null;
 }
 
 export interface KeyboardButton {

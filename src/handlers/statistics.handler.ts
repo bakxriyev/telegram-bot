@@ -8,6 +8,7 @@ import { huzurRepository } from '../database/repositories/huzur.repository.js';
 import { tashkentDateKey, lastTashkentDateKeys } from '../utils/schedule.js';
 import { backKeyboard } from '../keyboards/admin.keyboard.js';
 import { logger } from '../utils/logger.js';
+import { safeEditMessageText } from '../utils/safeEdit.js';
 import type { BotContext } from '../types/index.js';
 
 export async function buildStatsText(): Promise<string> {
@@ -79,7 +80,7 @@ export function registerStatisticsHandler(bot: Bot<BotContext>): void {
   bot.callbackQuery('admin:stats', requireAdmin, async (ctx) => {
     await ctx.answerCallbackQuery({ text: 'Hisoblanmoqda...' });
     try {
-      await ctx.editMessageText(await buildStatsText(), { reply_markup: backKeyboard('admin:back') });
+      await safeEditMessageText(ctx, await buildStatsText(), { reply_markup: backKeyboard('admin:back') });
     } catch (err) {
       logger.error('Failed to build stats', { err });
       await ctx.editMessageText('❌ Statistikani hisoblab bo‘lmadi.', { reply_markup: backKeyboard('admin:back') });

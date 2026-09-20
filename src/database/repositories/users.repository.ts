@@ -8,6 +8,8 @@ export interface UpsertUserInput {
   first_name: string | null;
   last_name: string | null;
   source?: SourceType | null;
+  /** undefined → eski qiymat saqlanadi; null → to'g'ridan-to'g'ri /start */
+  startParam?: string | null;
 }
 
 const PAGE_SIZE = 500;
@@ -30,14 +32,35 @@ export const usersRepository = {
     if (input.source !== undefined) {
       payload.source = input.source;
     }
-    const { data, error } = await supabase
-      .from('users')
-      .upsert(payload, { onConflict: 'telegram_id' })
-      .select('*')
-      .single();
+    if (input.startParam !== undefined) {
+      payload.start_param = input.startParam;
+    }
+    const attempt = async (body: Record<string, unknown>) => {
+      const { data, error } = await supabase
+        .from('users')
+        .upsert(body, { onConflict: 'telegram_id' })
+        .select('*')
+        .single();
+      return { data, error };
+    };
 
-    if (error) throw new DatabaseError(`Failed to upsert user ${input.telegram_id}`, error);
-    return data as UserRow;
+    let res = await attempt(payload);
+    // Migratsiya hali yurgizilmagan bo'lsa — yangi ustunlarsiz qayta urinamiz,
+    // shunda /start hech qachon bazasiz qolib ketmaydi.
+    if (res.error && res.error.message.includes('start_param')) {
+      const { start_param: _drop1, ...withoutParam } = payload;
+      void _drop1;
+      res = await attempt(withoutParam);
+    }
+    if (res.error && res.error.message.includes('source')) {
+      const { source: _drop2, start_param: _drop3, ...minimal } = payload;
+      void _drop2;
+      void _drop3;
+      res = await attempt(minimal);
+    }
+
+    if (res.error) throw new DatabaseError(`Failed to upsert user ${input.telegram_id}`, res.error);
+    return res.data as UserRow;
   },
 
   /**
@@ -168,8 +191,35 @@ export const usersRepository = {
    * Statistika uchun: created_at + source + is_active ni sahifalab qaytaradi.
    * Source bo'yicha (VSL/Instagram) kunlik va umumiy hisoblash uchun.
    */
-  async listAllForStats(): Promise<{ created_at: string; source: string | null; is_active: boolean }[]> {
-    const rows: { created_at: string; source: string | null; is_active: boolean }[] = [];
+  async listAllForStats(): Promise<{ created_at: string; source: string | null; is_active: boolean; start_param: string | null }[]> {
+    const rows: { created_at: string; source: string | null; is_active: boolean; start_param: string | null }[] = [];
+    let from = 0;
+    for (;;) {
+      const to = from + 1000 - 1;
+      const { data, error } = await supabase
+        .from('users')
+        .select('created_at, source, is_active, start_param')
+        .order('created_at', { ascending: true })
+        .range(from, to);
+
+      // start_param ustuni hali qo'shilmagan bo'lsa (migratsiya yurgizilmagan) —
+      // usiz davom etamiz, barchasi "noma'lum kirish" bo'lib hisoblanadi.
+      if (error && error.message.includes('start_param')) {
+        return this.listAllForStatsLegacy();
+      }
+      if (error) throw new DatabaseError('Failed to list users for stats', error);
+      const page = (data as { created_at: string; source: string | null; is_active: boolean; start_param: string | null }[]) ?? [];
+      if (page.length === 0) break;
+      for (const r of page) rows.push(r);
+      if (page.length < 1000) break;
+      from += 1000;
+    }
+    return rows;
+  },
+
+  /** Migratsiyasiz eski baza uchun: start_param siz variant. */
+  async listAllForStatsLegacy(): Promise<{ created_at: string; source: string | null; is_active: boolean; start_param: string | null }[]> {
+    const rows: { created_at: string; source: string | null; is_active: boolean; start_param: string | null }[] = [];
     let from = 0;
     for (;;) {
       const to = from + 1000 - 1;
@@ -182,7 +232,7 @@ export const usersRepository = {
       if (error) throw new DatabaseError('Failed to list users for stats', error);
       const page = (data as { created_at: string; source: string | null; is_active: boolean }[]) ?? [];
       if (page.length === 0) break;
-      for (const r of page) rows.push(r);
+      for (const r of page) rows.push({ ...r, start_param: null });
       if (page.length < 1000) break;
       from += 1000;
     }

@@ -27,6 +27,7 @@ import { detectContentType, extractCaptionOrText, extractFileId, copyToStorage, 
 import { env } from '../config/env.js';
 import type { BotContext, SessionData, KeyboardButton, ProgrevMessageRow, ContentTypeName } from '../types/index.js';
 import { normalizeSource, sourceDisplayName } from '../types/index.js';
+import { safeEditMessageText } from '../utils/safeEdit.js';
 import { logger } from '../utils/logger.js';
 
 function progrevItemText(msg: ProgrevMessageRow): string {
@@ -137,6 +138,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
           updated_at: now,
           created_at: now,
           source: msg.source,
+          start_param: null,
         },
       });
     } catch (err) {
@@ -801,12 +803,12 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
     try {
       const messages = await progrevRepository.listAll();
       if (messages.length === 0) {
-        await ctx.editMessageText('📋 Hozircha progrev xabarlar yo‘q.\n\n➕ Yangi progrev qo‘shing.', {
+        await safeEditMessageText(ctx, '📋 Hozircha progrev xabarlar yo‘q.\n\n➕ Yangi progrev qo‘shing.', {
           reply_markup: progrevMenuKeyboard(),
         });
       } else {
         const active = messages.filter((m) => m.is_active).length;
-        await ctx.editMessageText(`📋 Progrev ro‘yxati (🟢 ${active}/${messages.length} aktiv):`, {
+        await safeEditMessageText(ctx, `📋 Progrev ro‘yxati (🟢 ${active}/${messages.length} aktiv):`, {
           reply_markup: progrevListKeyboard(messages),
         });
       }
@@ -826,7 +828,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       }
       const text = progrevItemText(msg) + scheduledInfo;
       if (viaEdit) {
-        await ctx.editMessageText(text, { reply_markup: progrevItemKeyboard(msg) });
+        await safeEditMessageText(ctx, text, { reply_markup: progrevItemKeyboard(msg) });
       } else {
         await ctx.reply(text, { reply_markup: progrevItemKeyboard(msg) });
       }

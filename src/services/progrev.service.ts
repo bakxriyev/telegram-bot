@@ -435,6 +435,7 @@ export const progrevService = {
           updated_at: send.user.updated_at,
           created_at: send.user.created_at,
           source: send.user.source,
+          start_param: send.user.start_param ?? null,
         };
 
         const outcome = await safeDeliver(bot, {

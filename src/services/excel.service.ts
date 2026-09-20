@@ -28,16 +28,18 @@ export function createUsersWorkbook(): { workbook: ExcelJS.Workbook; sheet: Exce
     { header: 'Ism', key: 'first_name', width: 20 },
     { header: 'Familiya', key: 'last_name', width: 20 },
     { header: 'Source', key: 'source', width: 14 },
+    { header: 'Kirish', key: 'entry', width: 16 },
     { header: 'Holat', key: 'status', width: 12 },
     { header: "Qo'shilgan (Toshkent)", key: 'started', width: 22 },
     { header: 'Yangilangan (Toshkent)', key: 'updated', width: 22 },
   ];
   styleHeader(sheet.getRow(1));
-  autosizeColumns(sheet, [6, 16, 20, 20, 20, 14, 12, 22, 22]);
+  autosizeColumns(sheet, [6, 16, 20, 20, 20, 14, 16, 12, 22, 22]);
   return { workbook, sheet };
 }
 
 export function addUserRow(sheet: ExcelJS.Worksheet, n: number, u: UserRow): void {
+  const entry = !u.source ? '' : (u.start_param?.trim() ? u.start_param : "to'g'ridan-to'g'ri");
   sheet.addRow({
     n,
     telegram_id: u.telegram_id,
@@ -45,6 +47,7 @@ export function addUserRow(sheet: ExcelJS.Worksheet, n: number, u: UserRow): voi
     first_name: u.first_name ?? '',
     last_name: u.last_name ?? '',
     source: u.source ?? '',
+    entry,
     status: u.is_active ? 'Aktiv' : 'Bloklagan',
     started: formatTashkent(u.started_at),
     updated: formatTashkent(u.updated_at),

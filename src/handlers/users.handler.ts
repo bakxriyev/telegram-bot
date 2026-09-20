@@ -5,6 +5,7 @@ import { usersRepository } from '../database/repositories/users.repository.js';
 import { createUsersWorkbook, addUserRow, workbookToBuffer } from '../services/excel.service.js';
 import { lastTashkentDateKeys } from '../utils/schedule.js';
 import { logger } from '../utils/logger.js';
+import { safeEditMessageText } from '../utils/safeEdit.js';
 import type { BotContext } from '../types/index.js';
 
 function usersMenuKeyboard(): InlineKeyboard {
@@ -72,7 +73,7 @@ export function registerUsersHandler(bot: Bot<BotContext>): void {
         }),
       ];
 
-      await ctx.editMessageText(lines.join('\n'), { reply_markup: usersMenuKeyboard() });
+      await safeEditMessageText(ctx, lines.join('\n'), { reply_markup: usersMenuKeyboard() });
     } catch (err) {
       logger.error('Failed to build users stats', { err });
       await ctx.editMessageText('❌ Statistikani hisoblab bo‘lmadi.', { reply_markup: usersMenuKeyboard() });
