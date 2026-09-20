@@ -1,9 +1,9 @@
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import { requireAdmin } from '../middleware/admin.middleware.js';
-import { userService } from '../services/user.service.js';
+import { userService, buildSourceStats, groupLabel } from '../services/user.service.js';
 import { usersRepository } from '../database/repositories/users.repository.js';
 import { createUsersWorkbook, addUserRow, workbookToBuffer } from '../services/excel.service.js';
-import { tashkentDateKey, lastTashkentDateKeys } from '../utils/schedule.js';
+import { lastTashkentDateKeys } from '../utils/schedule.js';
 import { logger } from '../utils/logger.js';
 import type { BotContext } from '../types/index.js';
 
@@ -30,36 +30,46 @@ export function registerUsersHandler(bot: Bot<BotContext>): void {
     await ctx.answerCallbackQuery();
   });
 
-  // Kunlik statistika (Toshkent vaqti bilan)
+  // Kunlik statistika (Toshkent vaqti bilan) — source bo'yicha ajratilgan
   bot.callbackQuery('admin:users:stats', requireAdmin, async (ctx) => {
     await ctx.answerCallbackQuery({ text: 'Hisoblanmoqda...' });
     try {
-      const { total, active, inactive } = await userService.getStats();
-      const dates = await usersRepository.listAllCreatedAt();
-
-      const byDay = new Map<string, number>();
-      for (const d of dates) {
-        const key = tashkentDateKey(d);
-        byDay.set(key, (byDay.get(key) ?? 0) + 1);
-      }
+      const rows = await usersRepository.listAllForStats();
+      const stats = buildSourceStats(rows);
 
       const keys = lastTashkentDateKeys(7);
       const [todayKey, yesterdayKey] = keys;
-      const today = byDay.get(todayKey) ?? 0;
-      const yesterday = byDay.get(yesterdayKey) ?? 0;
+      const dayRec = (k: string) => stats.byDay.get(k) ?? { vsl: 0, instagram: 0, unknown: 0 };
+      const t = dayRec(todayKey);
+      const y = dayRec(yesterdayKey);
+      const dayTotal = (k: string) => {
+        const r = dayRec(k);
+        return r.vsl + r.instagram + r.unknown;
+      };
+
+      const srcLine = (g: 'vsl' | 'instagram' | 'unknown') => {
+        const s = stats.bySource[g];
+        return `${groupLabel(g)}: ${s.total} (🟢 ${s.active} / 🔴 ${s.inactive})`;
+      };
 
       const lines = [
         '📊 Userlar statistikasi (Toshkent vaqti)',
         '',
-        `👥 Jami userlar: ${total}`,
-        `🟢 Aktiv: ${active}`,
-        `🔴 Bloklagan: ${inactive}`,
+        `👥 Jami: ${stats.total} (🟢 ${stats.active} / 🔴 ${stats.inactive})`,
+        srcLine('vsl'),
+        srcLine('instagram'),
+        srcLine('unknown'),
         '',
-        `📅 Bugun (${todayKey}): +${today}`,
-        `📅 Kecha (${yesterdayKey}): +${yesterday}`,
+        `📅 Bugun (${todayKey}): +${dayTotal(todayKey)}`,
+        `   🎬 VSL: +${t.vsl} | 📸 Instagram: +${t.instagram} | ❓: +${t.unknown}`,
+        `📅 Kecha (${yesterdayKey}): +${dayTotal(yesterdayKey)}`,
+        `   🎬 VSL: +${y.vsl} | 📸 Instagram: +${y.instagram} | ❓: +${y.unknown}`,
         '',
-        'So‘nggi 7 kun:',
-        ...keys.map((k) => `${k}: +${byDay.get(k) ?? 0}`),
+        'So‘nggi 7 kun (VSL / Instagram / ❓):',
+        ...keys.map((k) => {
+          const r = dayRec(k);
+          return `${k}: +${r.vsl + r.instagram + r.unknown} (${r.vsl} / ${r.instagram} / ${r.unknown})`;
+        }),
       ];
 
       await ctx.editMessageText(lines.join('\n'), { reply_markup: usersMenuKeyboard() });

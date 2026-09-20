@@ -158,15 +158,19 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       const newActive = !msg.is_active;
       await progrevRepository.setActive(id, newActive);
 
-      // Yoqilganda — barcha active userlarga reja yaratish
-      let scheduledInfo = '';
-      if (newActive) {
-        const { scheduled } = await progrevService.scheduleForAllActiveUsers(id);
-        scheduledInfo = `\n👥 ${scheduled} ta userga reja yaratildi`;
-      }
-
       await ctx.answerCallbackQuery({ text: newActive ? '✅ Yoqildi' : '⏸ O\'chirildi' });
+      // Yoqilganda — barcha active userlarga reja yaratish FONDA ketadi.
+      // Ko'p user bo'lsa kutib qolmasligi uchun javob darhol qaytariladi,
+      // soni tayyor bo'lganda alohida xabar bilan aytiladi.
+      const scheduledInfo = newActive ? '\n⏳ Userlarga reja fonda yaratilmoqda...' : '';
       await showProgrevItem(ctx, id, true, scheduledInfo);
+      if (newActive) {
+        void progrevService
+          .scheduleForAllActiveUsers(id)
+          .then(({ scheduled }) =>
+            ctx.reply(`👥 "${msg.name}": ${scheduled} ta userga reja yaratildi.`).catch(() => undefined),
+          );
+      }
     } catch (err) {
       logger.error('Failed to toggle progrev message', { id, err });
       await ctx.answerCallbackQuery({ text: 'Xatolik', show_alert: true });
@@ -758,21 +762,29 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       });
       resetAdminState(ctx.from.id);
 
-      // Yangi progrev — faqat SHU source dagi active userlarga reja yaratish
-      const { scheduled } = await progrevService.scheduleForAllActiveUsers(created.id);
-
+      // Yangi progrev — faqat SHU source dagi active userlarga reja yaratish.
+      // User ko'p bo'lsa sekin bo'lishi mumkin, shuning uchun FONDA ketadi:
+      // javob darhol chiqadi, soni tayyor bo'lganda alohida xabar keladi.
+      // (Oldin shu yerda kutilgani uchun "qotib qolgan"dek ko'ringan.)
       const text =
         `✅ Progrev saqlandi!\n\n` +
         `🔥 ${created.name}\n` +
         `📋 Source: ${sourceDisplayName(source)}\n` +
         `⏳ ${formatProgrevDelay(delay.days, delay.hours, delay.minutes)} (startdan keyin)\n` +
         `🟢 Aktiv\n\n` +
-        `👥 ${scheduled} ta active userga reja yaratildi.`;
+        `⏳ Userlarga reja fonda yaratilmoqda...`;
       if (ctx.callbackQuery) {
         await ctx.editMessageText(text, { reply_markup: progrevItemKeyboard(created) });
       } else {
         await ctx.reply(text, { reply_markup: progrevItemKeyboard(created) });
       }
+      void progrevService
+        .scheduleForAllActiveUsers(created.id)
+        .then(({ scheduled }) =>
+          ctx
+            .reply(`👥 "${created.name}": ${scheduled} ta active userga reja yaratildi.`)
+            .catch(() => undefined),
+        );
     } catch (err) {
       logger.error('Failed to create progrev message', { err });
       resetAdminState(ctx.from.id);

@@ -1,9 +1,67 @@
 import { usersRepository } from '../database/repositories/users.repository.js';
 import type { UserRow, SourceType } from '../types/index.js';
+import { normalizeSource } from '../types/index.js';
+import { tashkentDateKey } from '../utils/schedule.js';
 import { logger } from '../utils/logger.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Statistika guruhi: atigi 3 ta — vsl, instagram, noma'lum (source yozilmagan eskilar). */
+export type SourceGroup = 'vsl' | 'instagram' | 'unknown';
+
+export function groupSource(raw: string | null | undefined): SourceGroup {
+  const n = normalizeSource(raw);
+  if (n === 'vsl') return 'vsl';
+  if (n === 'instagram') return 'instagram';
+  return 'unknown';
+}
+
+export function groupLabel(g: SourceGroup): string {
+  if (g === 'vsl') return '🎬 VSL';
+  if (g === 'instagram') return '📸 Instagram';
+  return '❓ Nomaʼlum';
+}
+
+export interface SourceStats {
+  total: number;
+  active: number;
+  inactive: number;
+  bySource: Record<SourceGroup, { total: number; active: number; inactive: number }>;
+  /** Sana (YYYY-MM-DD) → guruh → o'sha kuni qo'shilganlar soni */
+  byDay: Map<string, Record<SourceGroup, number>>;
+}
+
+/** Bitta skanerlash bilan hamma statistika: umumiy + source bo'yicha + kunlik. */
+export function buildSourceStats(
+  rows: { created_at: string; source: string | null; is_active: boolean }[],
+): SourceStats {
+  const empty = () => ({ total: 0, active: 0, inactive: 0 });
+  const bySource: SourceStats['bySource'] = { vsl: empty(), instagram: empty(), unknown: empty() };
+  const byDay = new Map<string, Record<SourceGroup, number>>();
+  let total = 0;
+  let active = 0;
+  for (const r of rows) {
+    total++;
+    const g = groupSource(r.source);
+    const cell = bySource[g];
+    cell.total++;
+    if (r.is_active) {
+      active++;
+      cell.active++;
+    } else {
+      cell.inactive++;
+    }
+    const day = tashkentDateKey(r.created_at);
+    let rec = byDay.get(day);
+    if (!rec) {
+      rec = { vsl: 0, instagram: 0, unknown: 0 };
+      byDay.set(day, rec);
+    }
+    rec[g]++;
+  }
+  return { total, active, inactive: total - active, bySource, byDay };
 }
 
 export const userService = {

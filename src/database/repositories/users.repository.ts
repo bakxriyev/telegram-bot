@@ -164,6 +164,31 @@ export const usersRepository = {
     return count ?? 0;
   },
 
+  /**
+   * Statistika uchun: created_at + source + is_active ni sahifalab qaytaradi.
+   * Source bo'yicha (VSL/Instagram) kunlik va umumiy hisoblash uchun.
+   */
+  async listAllForStats(): Promise<{ created_at: string; source: string | null; is_active: boolean }[]> {
+    const rows: { created_at: string; source: string | null; is_active: boolean }[] = [];
+    let from = 0;
+    for (;;) {
+      const to = from + 1000 - 1;
+      const { data, error } = await supabase
+        .from('users')
+        .select('created_at, source, is_active')
+        .order('created_at', { ascending: true })
+        .range(from, to);
+
+      if (error) throw new DatabaseError('Failed to list users for stats', error);
+      const page = (data as { created_at: string; source: string | null; is_active: boolean }[]) ?? [];
+      if (page.length === 0) break;
+      for (const r of page) rows.push(r);
+      if (page.length < 1000) break;
+      from += 1000;
+    }
+    return rows;
+  },
+
   /** Faqat created_at ustunini sahifalab qaytaradi (kunlik guruhlash uchun). */
   async listAllCreatedAt(): Promise<string[]> {
     const dates: string[] = [];

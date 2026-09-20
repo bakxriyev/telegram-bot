@@ -1,6 +1,6 @@
 import { Bot } from 'grammy';
 import { requireAdmin } from '../middleware/admin.middleware.js';
-import { userService } from '../services/user.service.js';
+import { buildSourceStats } from '../services/user.service.js';
 import { usersRepository } from '../database/repositories/users.repository.js';
 import { startMessageService } from '../services/startMessage.service.js';
 import { broadcastsRepository } from '../database/repositories/broadcasts.repository.js';
@@ -11,20 +11,22 @@ import { logger } from '../utils/logger.js';
 import type { BotContext } from '../types/index.js';
 
 export async function buildStatsText(): Promise<string> {
-  const [{ total, active, inactive }, startMessagesCount, broadcastsCount, userDates, leadDates, counters] =
-    await Promise.all([
-      userService.getStats(),
-      startMessageService.count(),
-      broadcastsRepository.count(),
-      usersRepository.listAllCreatedAt(),
-      huzurRepository.listAllLeadDates(),
-      huzurRepository.listAllCounters(),
-    ]);
+  const [userRows, startMessagesCount, broadcastsCount, leadDates, counters] = await Promise.all([
+    usersRepository.listAllForStats(),
+    startMessageService.count(),
+    broadcastsRepository.count(),
+    huzurRepository.listAllLeadDates(),
+    huzurRepository.listAllCounters(),
+  ]);
 
+  const ustats = buildSourceStats(userRows);
   const usersByDay = new Map<string, number>();
-  for (const d of userDates) {
-    const key = tashkentDateKey(d);
-    usersByDay.set(key, (usersByDay.get(key) ?? 0) + 1);
+  const vslByDay = new Map<string, number>();
+  const instaByDay = new Map<string, number>();
+  for (const [day, rec] of ustats.byDay) {
+    usersByDay.set(day, rec.vsl + rec.instagram + rec.unknown);
+    vslByDay.set(day, rec.vsl);
+    instaByDay.set(day, rec.instagram);
   }
 
   const leadsByDay = new Map<string, number>();
@@ -45,13 +47,20 @@ export async function buildStatsText(): Promise<string> {
 
   const [todayKey, yesterdayKey] = lastTashkentDateKeys(2);
 
+  const v = ustats.bySource.vsl;
+  const ig = ustats.bySource.instagram;
+  const un = ustats.bySource.unknown;
+
   return [
     '📊 Statistika (Toshkent vaqti)',
     '',
     '👥 Bot userlari:',
-    `   Jami: ${total} (🟢 ${active} / 🔴 ${inactive})`,
-    `   Bugun: +${usersByDay.get(todayKey) ?? 0}`,
-    `   Kecha: +${usersByDay.get(yesterdayKey) ?? 0}`,
+    `   Jami: ${ustats.total} (🟢 ${ustats.active} / 🔴 ${ustats.inactive})`,
+    `   🎬 VSL: ${v.total} (🟢 ${v.active} / 🔴 ${v.inactive})`,
+    `   📸 Instagram: ${ig.total} (🟢 ${ig.active} / 🔴 ${ig.inactive})`,
+    ...(un.total > 0 ? [`   ❓ Nomaʼlum: ${un.total} (🟢 ${un.active} / 🔴 ${un.inactive})`] : []),
+    `   Bugun: +${usersByDay.get(todayKey) ?? 0} (🎬 +${vslByDay.get(todayKey) ?? 0} / 📸 +${instaByDay.get(todayKey) ?? 0})`,
+    `   Kecha: +${usersByDay.get(yesterdayKey) ?? 0} (🎬 +${vslByDay.get(yesterdayKey) ?? 0} / 📸 +${instaByDay.get(yesterdayKey) ?? 0})`,
     '',
     '🌐 Huzur sayti:',
     `   📝 Jami lidlar: ${leadDates.length}`,
