@@ -2,15 +2,46 @@ import { Bot } from 'grammy';
 import { userService } from '../services/user.service.js';
 import { startMessageService } from '../services/startMessage.service.js';
 import { progrevService } from '../services/progrev.service.js';
-import type { BotContext, UserRow } from '../types/index.js';
+import { usersRepository } from '../database/repositories/users.repository.js';
+import type { BotContext, UserRow, SourceType } from '../types/index.js';
+import { normalizeSource } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+
+function extractSourceFromStartPayload(payload: string | undefined): SourceType | null {
+  // /start vsl, /start vsl1..vsl10, /start instagram — hammasi qabul qilinadi.
+  // vsl1..vsl10 → 'vsl' guruhiga map qilinadi (hammasiga bitta start+progrev).
+  return normalizeSource(payload);
+}
 
 export function registerStartHandler(bot: Bot<BotContext>): void {
   bot.command('start', async (ctx) => {
     if (!ctx.from) return;
     const from = ctx.from;
 
-    logger.info('/start received', { telegram_id: from.id });
+    // 0) Source ni aniqlash — 3 holat:
+    //  a) linkda vsl/vsl1..vslN bo'lsa → 'vsl' (VSL oqim)
+    //  b) linkda instagram bo'lsa → 'instagram' (Instagram oqim)
+    //  c) linkda hech narsa bo'lmasa (oddiy /start) → userning ESKI
+    //     sourceni bazadan olamiz, VSL user instagramga o'tib ketmasligi uchun.
+    //     Yangi user bo'lsa → 'instagram'.
+    const payloadSource = extractSourceFromStartPayload(ctx.match);
+    let finalSource: SourceType;
+    if (payloadSource) {
+      finalSource = payloadSource;
+    } else {
+      try {
+        const existing = await usersRepository.findByTelegramId(from.id);
+        finalSource = normalizeSource(existing?.source) ?? 'instagram';
+      } catch (err) {
+        logger.warn('Failed to read existing user source, falling back to instagram', {
+          telegram_id: from.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        finalSource = 'instagram';
+      }
+    }
+
+    logger.info('/start received', { telegram_id: from.id, source: finalSource });
 
     // 1) DB yozuvini KUTMASDAN — darhol start xabarni yuboramiz.
     // Shaxsiylashtirish ({name}) uchun Telegram'dan kelgan ma'lumot yetadi.
@@ -25,6 +56,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       started_at: now,
       updated_at: now,
       created_at: now,
+      source: finalSource,
     };
     await startMessageService.deliverActiveStartMessage(bot, previewUser);
 
@@ -35,6 +67,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       username: from.username,
       first_name: from.first_name,
       last_name: from.last_name,
+      source: finalSource,
     });
 
     // 3) Progrev rejasi ham orqa fonda — userning SHU start vaqtidan
@@ -44,6 +77,7 @@ export function registerStartHandler(bot: Bot<BotContext>): void {
       username: from.username,
       first_name: from.first_name,
       last_name: from.last_name,
+      source: finalSource,
     });
   });
 }

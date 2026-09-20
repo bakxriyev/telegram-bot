@@ -1,5 +1,5 @@
 import { usersRepository } from '../database/repositories/users.repository.js';
-import type { UserRow } from '../types/index.js';
+import type { UserRow, SourceType } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 function sleep(ms: number): Promise<void> {
@@ -12,14 +12,16 @@ export const userService = {
     username?: string;
     first_name?: string;
     last_name?: string;
+    source?: SourceType | null;
   }): Promise<UserRow> {
     const user = await usersRepository.upsertByTelegramId({
       telegram_id: from.id,
       username: from.username ?? null,
       first_name: from.first_name ?? null,
       last_name: from.last_name ?? null,
+      source: from.source ?? null,
     });
-    logger.info('User registered/updated', { telegram_id: from.id });
+    logger.info('User registered/updated', { telegram_id: from.id, source: from.source });
     return user;
   },
 
@@ -33,6 +35,7 @@ export const userService = {
     username?: string;
     first_name?: string;
     last_name?: string;
+    source?: SourceType | null;
   }): Promise<void> {
     const delays = [0, 2000, 5000];
     for (let attempt = 0; attempt < delays.length; attempt++) {
@@ -43,6 +46,7 @@ export const userService = {
           username: from.username ?? null,
           first_name: from.first_name ?? null,
           last_name: from.last_name ?? null,
+          source: from.source ?? null,
         });
         if (attempt > 0) {
           logger.info('Background user upsert succeeded on retry', {
@@ -60,6 +64,14 @@ export const userService = {
       }
     }
     logger.error('Background user upsert failed after all retries', { telegram_id: from.id });
+  },
+
+  async updateUserSource(telegramId: number, source: SourceType): Promise<void> {
+    const user = await usersRepository.findByTelegramId(telegramId);
+    if (user) {
+      await usersRepository.updateSource(user.id, source);
+      logger.info('User source updated', { telegram_id: telegramId, source });
+    }
   },
 
   async getStats() {

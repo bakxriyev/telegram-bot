@@ -1,5 +1,15 @@
 import type { Context } from 'grammy';
 
+/**
+ * Source guruhlar: atigi 2 ta.
+ * - 'vsl' — barcha VSL linklar (vsl1..vsl10) uchun UMUMIY
+ * - 'instagram' — Instagram linki uchun
+ * Hamma VSL uchun bitta start xabar + bitta progrev zanjir bo'ladi.
+ */
+export type SourceType = 'vsl' | 'instagram' | string;
+
+export const VALID_SOURCES: SourceType[] = ['vsl', 'instagram'];
+
 export interface UserRow {
   id: string;
   telegram_id: number;
@@ -10,6 +20,7 @@ export interface UserRow {
   started_at: string;
   updated_at: string;
   created_at: string;
+  source: SourceType | null;
 }
 
 export interface KeyboardButton {
@@ -29,6 +40,7 @@ export interface StartMessageRow {
   caption_text: string | null;
   content_type: string | null;
   file_id: string | null;
+  source: SourceType;
   created_at: string;
   updated_at: string;
 }
@@ -82,6 +94,7 @@ export interface ProgrevMessageRow {
   caption_text: string | null;
   content_type: string | null;
   file_id: string | null;
+  source: SourceType;
   sent_count: number;
   failed_count: number;
   created_at: string;
@@ -121,20 +134,46 @@ export interface PendingChannelMessage {
   contentType: ContentTypeName;
 }
 
+/**
+ * Deep-link (?start=...) ni 2 guruhga map qiladi:
+ * vsl, vsl1..vsl10, VSL1... → 'vsl'
+ * instagram → 'instagram'
+ * Bo'sh/noma'lum → null (chaqiruvchi 'instagram' default qiladi)
+ */
+export function normalizeSource(raw: string | null | undefined): SourceType | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (s === 'vsl' || s === 'instagram') return s as SourceType;
+  // vsl1..vsl10 (va kelajakdagi vslN) — hammasi bitta VSL guruhi
+  if (/^vsl\d*$/.test(s)) return 'vsl';
+  return null;
+}
+
+export function sourceDisplayName(source: SourceType | null | undefined): string {
+  if (!source) return '(nomaʼlum)';
+  const s = String(source).toLowerCase().trim();
+  if (s === 'vsl' || s.startsWith('vsl')) return 'VSL';
+  if (s === 'instagram') return 'Instagram';
+  return String(source);
+}
+
 export interface SessionData {
   step:
     | 'idle'
+    | 'waiting_for_start_source'
     | 'waiting_for_start_message'
     | 'waiting_for_start_name'
     | 'waiting_for_start_keyboard_name'
     | 'waiting_for_start_keyboard_url'
     | 'waiting_for_start_rename_message'
     | 'waiting_for_start_rename_name'
+    | 'waiting_for_start_source_edit'
     | 'waiting_for_broadcast_message'
     | 'waiting_for_broadcast_keyboard_name'
     | 'waiting_for_broadcast_keyboard_url'
     | 'waiting_for_broadcast_keyboard_ask'
     | 'waiting_for_broadcast_confirmation'
+    | 'waiting_for_progrev_source'
     | 'waiting_for_progrev_message'
     | 'waiting_for_progrev_name'
     | 'waiting_for_progrev_delay_days'
@@ -147,7 +186,8 @@ export interface SessionData {
     | 'waiting_for_progrev_edit_days'
     | 'waiting_for_progrev_edit_hours'
     | 'waiting_for_progrev_edit_minutes'
-    | 'waiting_for_progrev_edit_message';
+    | 'waiting_for_progrev_edit_message'
+    | 'waiting_for_progrev_source_edit';
   pendingChannelMessage?: PendingChannelMessage;
   editingStartMessageId?: string;
   pendingBroadcastId?: string;
@@ -157,6 +197,7 @@ export interface SessionData {
   pendingProgrevName?: string;
   editingProgrevId?: string;
   pendingProgrevDelay?: { days: number; hours: number; minutes: number };
+  pendingSource?: SourceType;
 }
 
 export type BotContext = Context;

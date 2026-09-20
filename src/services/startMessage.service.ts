@@ -1,6 +1,6 @@
 import type { Bot } from 'grammy';
 import { startMessagesRepository } from '../database/repositories/startMessages.repository.js';
-import type { UserRow, StartMessageRow, ContentTypeName } from '../types/index.js';
+import type { UserRow, StartMessageRow, ContentTypeName, SourceType, KeyboardButton } from '../types/index.js';
 import { deliverStorageMessage } from './telegram.service.js';
 import { logger } from '../utils/logger.js';
 
@@ -19,7 +19,8 @@ export const startMessageService = {
    * Bitta xabar xato bersa ham qolganlari to'xtamaydi.
    */
   async deliverActiveStartMessage(bot: Bot, user: UserRow): Promise<void> {
-    const activeMessages = await startMessagesRepository.listActiveOrdered();
+    const source = user.source ?? 'instagram';
+    const activeMessages = await startMessagesRepository.listActiveOrdered(source);
 
     if (activeMessages.length === 0) {
       await bot.api.sendMessage(
@@ -37,6 +38,7 @@ export const startMessageService = {
         logger.error('Failed to deliver a start message', {
           telegram_id: user.telegram_id,
           start_message_id: msg.id,
+          source,
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -60,8 +62,22 @@ export const startMessageService = {
     });
   },
 
-  createAndOptionallyActivate: startMessagesRepository.create.bind(startMessagesRepository),
+  async create(input: {
+    name: string;
+    channel_id: number;
+    message_id: number;
+    activate: boolean;
+    keyboard_buttons?: KeyboardButton[];
+    caption_text?: string | null;
+    content_type?: string | null;
+    file_id?: string | null;
+    source: SourceType;
+  }): Promise<StartMessageRow> {
+    return startMessagesRepository.create(input);
+  },
+
   listAll: startMessagesRepository.listAll.bind(startMessagesRepository),
+  listBySource: startMessagesRepository.listBySource.bind(startMessagesRepository),
   listActiveOrdered: startMessagesRepository.listActiveOrdered.bind(startMessagesRepository),
   getActive: startMessagesRepository.getActive.bind(startMessagesRepository),
   getById: startMessagesRepository.getById.bind(startMessagesRepository),
@@ -69,6 +85,8 @@ export const startMessageService = {
   activate: (id: string) => startMessagesRepository.setActive(id, true),
   updateMessageRef: startMessagesRepository.updateMessageRef.bind(startMessagesRepository),
   updateKeyboardButtons: startMessagesRepository.updateKeyboardButtons.bind(startMessagesRepository),
+  updateName: startMessagesRepository.updateName.bind(startMessagesRepository),
+  updateSource: startMessagesRepository.updateSource.bind(startMessagesRepository),
   delete: startMessagesRepository.delete.bind(startMessagesRepository),
   count: startMessagesRepository.count.bind(startMessagesRepository),
 };

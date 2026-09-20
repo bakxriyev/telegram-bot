@@ -1,5 +1,7 @@
 import { InlineKeyboard } from 'grammy';
-import type { StartMessageRow } from '../types/index.js';
+import type { StartMessageRow, SourceType } from '../types/index.js';
+
+export const SOURCES: SourceType[] = ['vsl', 'instagram'];
 
 export function startMessageMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
@@ -21,7 +23,7 @@ export function startMessageListKeyboard(
   const kb = new InlineKeyboard();
   for (const msg of messages) {
     const icon = msg.is_active ? '🟢' : '⚪';
-    kb.text(`${icon} ${msg.name}`, `${actionPrefix}:${msg.id}`).row();
+    kb.text(`${icon} ${msg.name} [${msg.source}]`, `${actionPrefix}:${msg.id}`).row();
   }
   kb.text('⬅️ Orqaga', 'admin:start');
   return kb;
@@ -42,8 +44,8 @@ export function startMessageSequenceKeyboard(
   for (const msg of allMessages) {
     const position = orderIndex.get(msg.id);
     const label = position
-      ? `${position}️⃣ 🟢 ${msg.name}`
-      : `⚪ ${msg.name}`;
+      ? `${position}️⃣ 🟢 ${msg.name} [${msg.source}]`
+      : `⚪ ${msg.name} [${msg.source}]`;
     kb.text(label, `admin:start:toggle:${msg.id}`).row();
   }
   kb.text('⬅️ Orqaga', 'admin:start');
@@ -66,4 +68,20 @@ export function confirmIncludeKeyboard(id: string): InlineKeyboard {
   return new InlineKeyboard()
     .text('✅ Ha, qo‘shish', `admin:start:toggle:${id}`)
     .text('❌ Yo‘q', 'admin:start');
+}
+
+export function sourceSelectionKeyboard(prefix: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  kb.text('🎬 VSL', `${prefix}:vsl`).row();
+  kb.text('📸 Instagram', `${prefix}:instagram`).row();
+  kb.text('⬅️ Orqaga', 'admin:start');
+  return kb;
+}
+
+export function sourceDisplayName(source: SourceType | null | undefined): string {
+  if (!source) return '(nomaʼlum)';
+  const s = String(source).toLowerCase().trim();
+  if (s.startsWith('vsl')) return 'VSL';
+  if (s === 'instagram') return 'Instagram';
+  return String(source);
 }

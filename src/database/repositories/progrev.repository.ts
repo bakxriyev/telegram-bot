@@ -1,6 +1,6 @@
 import { supabase } from '../supabase.js';
 import { DatabaseError } from '../../utils/errors.js';
-import type { KeyboardButton, ProgrevMessageRow, ProgrevSendRow } from '../../types/index.js';
+import type { KeyboardButton, ProgrevMessageRow, ProgrevSendRow, SourceType } from '../../types/index.js';
 
 export interface ProgrevDueSend extends ProgrevSendRow {
   progrev: ProgrevMessageRow;
@@ -14,6 +14,7 @@ export interface ProgrevDueSend extends ProgrevSendRow {
     started_at: string;
     updated_at: string;
     created_at: string;
+    source: SourceType | null;
   };
 }
 
@@ -32,6 +33,7 @@ export const progrevRepository = {
     caption_text?: string | null;
     content_type?: string | null;
     file_id?: string | null;
+    source: SourceType;
   }): Promise<ProgrevMessageRow> {
     const { data, error } = await supabase
       .from('progrev_messages')
@@ -47,6 +49,7 @@ export const progrevRepository = {
         caption_text: input.caption_text ?? null,
         content_type: input.content_type ?? null,
         file_id: input.file_id ?? null,
+        source: input.source,
       })
       .select('*')
       .single();
@@ -80,6 +83,32 @@ export const progrevRepository = {
       .order('created_at', { ascending: true });
 
     if (error) throw new DatabaseError('Failed to list active progrev messages', error);
+    return (data as ProgrevMessageRow[]) ?? [];
+  },
+
+  async listActiveBySource(source: SourceType): Promise<ProgrevMessageRow[]> {
+    const { data, error } = await supabase
+      .from('progrev_messages')
+      .select('*')
+      .eq('is_active', true)
+      .eq('source', source)
+      .order('delay_days', { ascending: true })
+      .order('delay_hours', { ascending: true })
+      .order('delay_minutes', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (error) throw new DatabaseError('Failed to list active progrev messages by source', error);
+    return (data as ProgrevMessageRow[]) ?? [];
+  },
+
+  async listBySource(source: SourceType): Promise<ProgrevMessageRow[]> {
+    const { data, error } = await supabase
+      .from('progrev_messages')
+      .select('*')
+      .eq('source', source)
+      .order('created_at', { ascending: false });
+
+    if (error) throw new DatabaseError('Failed to list progrev messages by source', error);
     return (data as ProgrevMessageRow[]) ?? [];
   },
 
@@ -121,6 +150,11 @@ export const progrevRepository = {
     const { error } = await supabase.from('progrev_messages').update({ name }).eq('id', id);
 
     if (error) throw new DatabaseError(`Failed to rename progrev message ${id}`, error);
+  },
+
+  async updateSource(id: string, source: SourceType): Promise<void> {
+    const { error } = await supabase.from('progrev_messages').update({ source }).eq('id', id);
+    if (error) throw new DatabaseError(`Failed to update progrev ${id} source`, error);
   },
 
   async updateContent(
@@ -295,6 +329,29 @@ export const progrevRepository = {
       .eq('status', 'pending');
 
     if (error) throw new DatabaseError(`Failed to cancel pending sends for progrev ${progrevId}`, error);
+  },
+
+  /**
+   * User boshqa source bilan qayta /start bosganda — eski source dan qolgan
+   * kutilayotgan rejalarni bekor qilish, aralashib ketmasligi uchun.
+   * keepProgrevIds — hozirgi source zanjiridagilar, ular tegilmaydi.
+   */
+  async cancelPendingByUserExcept(userId: string, keepProgrevIds: string[]): Promise<number> {
+    let q = supabase.from('progrev_sends').select('id').eq('user_id', userId).eq('status', 'pending');
+    // Supabase .not('progrev_id','in',...) bo'sh arrayda xato beradi — shuning uchun alohida.
+    if (keepProgrevIds.length > 0) {
+      q = q.not('progrev_id', 'in', `(${keepProgrevIds.map((id) => `"${id}"`).join(',')})`);
+    }
+    const { data, error } = await q;
+    if (error) throw new DatabaseError(`Failed to list stale pending sends for user ${userId}`, error);
+    const ids = ((data as { id: string }[]) ?? []).map((r) => r.id);
+    if (ids.length === 0) return 0;
+    const { error: updErr } = await supabase
+      .from('progrev_sends')
+      .update({ status: 'cancelled', error_message: 'source changed' })
+      .in('id', ids);
+    if (updErr) throw new DatabaseError(`Failed to cancel stale sends for user ${userId}`, updErr);
+    return ids.length;
   },
 
   async *iterateAllSends(): AsyncGenerator<ProgrevSendRow[]> {

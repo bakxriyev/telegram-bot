@@ -1,4 +1,4 @@
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
 import { startMessagesRepository } from '../database/repositories/startMessages.repository.js';
 import { requireAdmin } from '../middleware/admin.middleware.js';
 import { startMessageService } from '../services/startMessage.service.js';
@@ -8,12 +8,16 @@ import {
   startMessageListKeyboard,
   confirmDeleteKeyboard,
   confirmActivateKeyboard,
+  sourceSelectionKeyboard,
+  SOURCES,
+  sourceDisplayName,
 } from '../keyboards/startMessage.keyboard.js';
 import { backKeyboard } from '../keyboards/admin.keyboard.js';
 import { getAdminState, setAdminState, resetAdminState } from '../state/adminState.js';
 import { detectContentType, extractCaptionOrText, extractFileId, copyToStorage } from '../services/telegram.service.js';
 import { env } from '../config/env.js';
-import type { BotContext, SessionData } from '../types/index.js';
+import type { BotContext, SessionData, SourceType } from '../types/index.js';
+import { normalizeSource } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 function keyboardAskKeyboard(id: string) {
@@ -31,19 +35,43 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
   // === MENU ===
   bot.callbackQuery('admin:start', requireAdmin, async (ctx) => {
     if (ctx.from) resetAdminState(ctx.from.id);
-    const activeMsg = await startMessagesRepository.getActive();
-    const activeLine = activeMsg ? `🟢 Aktiv:\n${activeMsg.name}` : '🟢 Aktiv: yo\'q';
-    await ctx.editMessageText(`🚀 Start xabar\n\n${activeLine}`, {
-      reply_markup: startMessageMenuKeyboard(),
-    });
+    try {
+      const counts = await startMessagesRepository.countActiveBySource();
+      const activeLine =
+        counts.length === 0
+          ? "🟢 Aktiv: yo'q"
+          : '🟢 Aktiv (source bo‘yicha):\n' + counts.map((c) => `• ${sourceDisplayName(c.source)}: ${c.count} ta`).join('\n');
+      await ctx.editMessageText(`🚀 Start xabar\n\n${activeLine}\n\n⚠️ Atigi 2 xil start xabar bo'ladi:\n🎬 VSL (hamma vsl linklar uchun bitta)\n📸 Instagram (alohida)`, {
+        reply_markup: startMessageMenuKeyboard(),
+      });
+    } catch {
+      await ctx.editMessageText(`🚀 Start xabar`, { reply_markup: startMessageMenuKeyboard() });
+    }
     await ctx.answerCallbackQuery();
   });
 
   bot.callbackQuery('admin:start:add', requireAdmin, async (ctx) => {
     if (!ctx.from) return;
-    setAdminState(ctx.from.id, { step: 'waiting_for_start_message' });
+    setAdminState(ctx.from.id, { step: 'waiting_for_start_source' });
     await ctx.editMessageText(
-      '📩 Botga start xabarni yuboring yoki forward qiling.',
+      '📋 Qaysi manba uchun start xabar yaratmoqchisiz?\n\n🎬 VSL (hamma vsl linklar uchun bitta) yoki 📸 Instagram:',
+      { reply_markup: sourceSelectionKeyboard('admin:start:source') },
+    );
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:start:source:(.+)$/, requireAdmin, async (ctx, next) => {
+    // source:set:... edit callbacklari bilan to'qnashmasligi uchun
+    if (ctx.match[1].startsWith('set:')) return next();
+    if (!ctx.from) return;
+    const source = ctx.match[1] as SourceType;
+    if (!SOURCES.includes(source)) {
+      await ctx.answerCallbackQuery({ text: 'Noto\'g\'ri manba', show_alert: true });
+      return;
+    }
+    setAdminState(ctx.from.id, { step: 'waiting_for_start_message', pendingSource: source });
+    await ctx.editMessageText(
+      `✅ Manba tanlandi: ${sourceDisplayName(source)}\n\n📩 Botga start xabarni yuboring yoki forward qiling.`,
       { reply_markup: backKeyboard('admin:start') },
     );
     await ctx.answerCallbackQuery();
@@ -77,9 +105,60 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
 
   bot.callbackQuery(/^admin:start:edit:pick:(.+)$/, requireAdmin, async (ctx) => {
     if (!ctx.from) return;
+    const id = ctx.match[1];
+    const msg = await startMessageService.getById(id);
+    if (!msg) {
+      await ctx.answerCallbackQuery({ text: 'Topilmadi', show_alert: true });
+      return;
+    }
+    setAdminState(ctx.from.id, { step: 'idle', editingStartMessageId: id });
+    const kb = new InlineKeyboard()
+      .text('📩 Kontent', `admin:start:edit:content:${id}`)
+      .row()
+      .text('📋 Source', `admin:start:edit:source:${id}`)
+      .row()
+      .text('⬅️ Orqaga', 'admin:start');
+    await ctx.editMessageText(
+      `✏️ "${msg.name}"\n📋 Hozirgi source: ${sourceDisplayName(msg.source)}\n\nNimani o‘zgartirasiz?`,
+      { reply_markup: kb },
+    );
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:start:edit:content:(.+)$/, requireAdmin, async (ctx) => {
+    if (!ctx.from) return;
     setAdminState(ctx.from.id, { step: 'waiting_for_start_rename_message', editingStartMessageId: ctx.match[1] });
     await ctx.editMessageText('📩 Yangi kontentni botga yuboring yoki forward qiling.', { reply_markup: backKeyboard('admin:start') });
     await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:start:edit:source:(.+)$/, requireAdmin, async (ctx) => {
+    if (!ctx.from) return;
+    const id = ctx.match[1];
+    setAdminState(ctx.from.id, { step: 'waiting_for_start_source_edit', editingStartMessageId: id });
+    await ctx.editMessageText('📋 Yangi sourceni tanlang:', {
+      reply_markup: sourceSelectionKeyboard(`admin:start:source:set:${id}`),
+    });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:start:source:set:(.+):(.+)$/, requireAdmin, async (ctx) => {
+    const id = ctx.match[1];
+    const source = normalizeSource(ctx.match[2]);
+    if (!source) {
+      await ctx.answerCallbackQuery({ text: 'Noto‘g‘ri manba', show_alert: true });
+      return;
+    }
+    try {
+      await startMessagesRepository.updateSource(id, source);
+      if (ctx.from) resetAdminState(ctx.from.id);
+      await ctx.editMessageText(`✅ Source yangilandi: ${sourceDisplayName(source)}`, {
+        reply_markup: backKeyboard('admin:start'),
+      });
+    } catch (err) {
+      logger.error('Failed to update start message source', { id, err });
+      await ctx.answerCallbackQuery({ text: 'Xatolik', show_alert: true });
+    }
   });
 
   bot.callbackQuery('admin:start:delete', requireAdmin, async (ctx) => {
@@ -155,12 +234,12 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
   bot.on(':forward_origin', requireAdmin, async (ctx, next) => {
     if (!ctx.from) return next();
     if (!ctx.message) return next();
-    const state = getAdminState(ctx.from.id) as SessionData;
+    const state = getAdminState(ctx.from.id) as SessionData & { pendingSource?: SourceType };
     const forward = ctx.message.forward_origin;
     if (!forward || forward.type !== 'channel') return next();
 
     if (state.step === 'waiting_for_start_message') {
-      await acceptNewContent(ctx, forward.chat.id, forward.message_id);
+      await acceptNewContent(ctx, forward.chat.id, forward.message_id, state.pendingSource);
       return;
     }
 
@@ -180,7 +259,7 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
     const maybeText = (ctx.message as { text?: string }).text;
     if (maybeText?.startsWith('/')) return next();
 
-    const state = getAdminState(ctx.from.id) as SessionData;
+    const state = getAdminState(ctx.from.id) as SessionData & { pendingSource?: SourceType };
     if (state.step !== 'waiting_for_start_message' && state.step !== 'waiting_for_start_rename_message') return next();
 
     const contentType = detectContentType(ctx.message);
@@ -192,7 +271,7 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
     try {
       const stored = await copyToStorage(bot, ctx.from.id, ctx.message.message_id, env.STORAGE_CHANNEL_ID);
       if (state.step === 'waiting_for_start_message') {
-        await acceptNewContent(ctx, stored.channelId, stored.messageId);
+        await acceptNewContent(ctx, stored.channelId, stored.messageId, state.pendingSource);
       } else if (state.editingStartMessageId) {
         await acceptEditedContent(ctx, state.editingStartMessageId, stored.channelId, stored.messageId);
       }
@@ -208,25 +287,27 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
   // === TEXT HANDLER ===
   bot.on('message:text', requireAdmin, async (ctx, next) => {
     if (!ctx.from) return next();
-    const state = getAdminState(ctx.from.id) as SessionData;
+    const state = getAdminState(ctx.from.id) as SessionData & { pendingSource?: SourceType };
     const step = state.step as string;
     const text = ctx.message.text.trim();
 
-    // Yangi start xabar — nom kiritish
+    // Yangi start xabar — manba tanlangandan keyin nom kiritish
     if (step === 'waiting_for_start_name' && state.pendingChannelMessage) {
       if (!text) { await ctx.reply('❌ Nom bo\'sh bo\'lishi mumkin emas.'); return; }
       try {
         const pending = state.pendingChannelMessage;
+        const src = normalizeSource(state.pendingSource) ?? 'instagram';
         const created = await broadcastService.createStartMessageWithKeyboard(
           text, pending.channelId, pending.messageId,
           { captionText: pending.text, contentType: pending.contentType, fileId: pending.fileId },
+          src,
         );
         setAdminState(ctx.from.id, {
           step: 'idle',
           editingStartMessageId: created.id,
           pendingKeyboardButtons: [],
         });
-        await ctx.reply(`✅ "${text}" yaratildi!\n\n🔗 Inline keyboard qo'shasizmi?`, {
+        await ctx.reply(`✅ "${text}" yaratildi! (Manba: ${sourceDisplayName(src)})\n\n🔗 Inline keyboard qo'shasizmi?`, {
           reply_markup: keyboardAskKeyboard(created.id),
         });
       } catch (err) {
@@ -322,6 +403,7 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
     ctx: { reply: Function; from?: { id: number }; message?: any },
     channelId: number,
     messageId: number,
+    source?: SourceType,
   ) {
     const msg = ctx.message!;
     const contentType = detectContentType(msg);
@@ -337,6 +419,7 @@ export function registerStartMessagesHandler(bot: Bot<BotContext>): void {
         hasPlaceholder: !!text && /\{name\}|\{username\}/.test(text),
         contentType,
       },
+      pendingSource: source,
     });
     await ctx.reply('✅ Xabar qabul qilindi.\n\n✏️ Start xabar nomini kiriting:');
   }

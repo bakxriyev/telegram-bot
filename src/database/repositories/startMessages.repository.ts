@@ -1,6 +1,6 @@
 import { supabase } from '../supabase.js';
 import { DatabaseError } from '../../utils/errors.js';
-import type { StartMessageRow, KeyboardButton } from '../../types/index.js';
+import type { StartMessageRow, KeyboardButton, SourceType } from '../../types/index.js';
 
 export const startMessagesRepository = {
   async create(input: {
@@ -12,6 +12,7 @@ export const startMessagesRepository = {
     caption_text?: string | null;
     content_type?: string | null;
     file_id?: string | null;
+    source: SourceType;
   }): Promise<StartMessageRow> {
     const { data, error } = await supabase
       .from('start_messages')
@@ -24,6 +25,7 @@ export const startMessagesRepository = {
         caption_text: input.caption_text ?? null,
         content_type: input.content_type ?? null,
         file_id: input.file_id ?? null,
+        source: input.source,
       })
       .select('*')
       .single();
@@ -39,32 +41,37 @@ export const startMessagesRepository = {
   },
 
   /**
-   * Returns all start messages currently included in the /start sequence,
+   * Returns all start messages currently included in the /start sequence for a specific source,
    * ordered by when each was turned on (oldest first) — i.e. the order in
    * which they will be delivered to a user pressing /start.
+   * source berilmasa — barcha sourcelar (admin ko'rinishi uchun).
    */
-  async listActiveOrdered(): Promise<StartMessageRow[]> {
-    const { data, error } = await supabase
-      .from('start_messages')
-      .select('*')
-      .eq('is_active', true)
-      .order('activated_at', { ascending: true });
+  async listActiveOrdered(source?: SourceType): Promise<StartMessageRow[]> {
+    let q = supabase.from('start_messages').select('*').eq('is_active', true);
+    if (source) q = q.eq('source', source);
+    const { data, error } = await q.order('activated_at', { ascending: true });
 
     if (error) throw new DatabaseError('Failed to fetch active start messages', error);
     return (data as StartMessageRow[]) ?? [];
   },
 
-  async getActive(): Promise<StartMessageRow | null> {
-    const { data, error } = await supabase
-      .from('start_messages')
-      .select('*')
-      .eq('is_active', true)
-      .order('activated_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+  async getActive(source?: SourceType): Promise<StartMessageRow | null> {
+    let q = supabase.from('start_messages').select('*').eq('is_active', true);
+    if (source) q = q.eq('source', source);
+    const { data, error } = await q.order('activated_at', { ascending: true }).limit(1).maybeSingle();
 
     if (error) throw new DatabaseError('Failed to fetch active start message', error);
     return (data as StartMessageRow) ?? null;
+  },
+
+  async countActiveBySource(): Promise<{ source: string; count: number }[]> {
+    const { data, error } = await supabase.from('start_messages').select('source').eq('is_active', true);
+    if (error) throw new DatabaseError('Failed to count active start messages', error);
+    const map = new Map<string, number>();
+    for (const r of (data as { source: string }[]) ?? []) {
+      map.set(r.source, (map.get(r.source) ?? 0) + 1);
+    }
+    return [...map.entries()].map(([source, count]) => ({ source, count }));
   },
 
   async listAll(): Promise<StartMessageRow[]> {
@@ -74,6 +81,17 @@ export const startMessagesRepository = {
       .order('created_at', { ascending: false });
 
     if (error) throw new DatabaseError('Failed to list start messages', error);
+    return (data as StartMessageRow[]) ?? [];
+  },
+
+  async listBySource(source: SourceType): Promise<StartMessageRow[]> {
+    const { data, error } = await supabase
+      .from('start_messages')
+      .select('*')
+      .eq('source', source)
+      .order('created_at', { ascending: false });
+
+    if (error) throw new DatabaseError('Failed to list start messages by source', error);
     return (data as StartMessageRow[]) ?? [];
   },
 
@@ -138,6 +156,11 @@ export const startMessagesRepository = {
       .eq('id', id);
 
     if (error) throw new DatabaseError(`Failed to update start message ${id} keyboard`, error);
+  },
+
+  async updateSource(id: string, source: SourceType): Promise<void> {
+    const { error } = await supabase.from('start_messages').update({ source }).eq('id', id);
+    if (error) throw new DatabaseError(`Failed to update start message ${id} source`, error);
   },
 
   async delete(id: string): Promise<void> {

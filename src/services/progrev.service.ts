@@ -5,7 +5,8 @@ import { safeDeliver } from './telegram.service.js';
 import { isTashkentQuietHours, skipTashkentQuietForward, tashkentMorning8Ms } from '../utils/schedule.js';
 import { DatabaseError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { ContentTypeName, ProgrevMessageRow, UserRow } from '../types/index.js';
+import type { ContentTypeName, ProgrevMessageRow, UserRow, SourceType } from '../types/index.js';
+import { normalizeSource } from '../types/index.js';
 
 export const PROGREV_MAX_DAYS = 365;
 export const PROGREV_MAX_HOURS = 23;
@@ -59,7 +60,7 @@ function isUniqueViolation(err: unknown): boolean {
  * - hech biri 22:00–08:00 ga tushmaydi (tushsa keyingi 08:00 ga).
  *
  * Qaytaradi: shu tick'da yuborilmasligi kerak bo'lgan (kelajakka surilgan)
- * send id'lar to'plami. Bu bazadagi eski to'planib qolganlarga ham ishlaydi —
+ * send id'lar to'plami. Bu bazada eski to'planib qolganlarga ham ishlaydi —
  * keyingi kunduzgi tick'da avtomatik to'g'rilanadi.
  */
 async function reflowQuietBlockedChains(
@@ -162,6 +163,7 @@ export const progrevService = {
     username?: string;
     first_name?: string;
     last_name?: string;
+    source?: SourceType | null;
   }): Promise<void> {
     try {
       const user = await usersRepository.upsertByTelegramId({
@@ -169,12 +171,27 @@ export const progrevService = {
         username: from.username ?? null,
         first_name: from.first_name ?? null,
         last_name: from.last_name ?? null,
+        source: from.source ?? null,
       });
 
+      const source = from.source ?? 'instagram';
       const [activeMessages, existingSends] = await Promise.all([
-        progrevRepository.listActive(),
+        progrevRepository.listActiveBySource(source),
         progrevRepository.listSendsByUser(user.id),
       ]);
+
+      // MUHIM: boshqa source dan qolgan pendinglar aralashib ketmasligi uchun —
+      // hozirgi source zanjiriga kirmaydigan pendinglarni bekor qilamiz.
+      try {
+        const keepIds = activeMessages.map((m) => m.id);
+        await progrevRepository.cancelPendingByUserExcept(user.id, keepIds);
+      } catch (err) {
+        logger.warn('Failed to cancel stale progrev sends on source switch', {
+          telegram_id: from.id,
+          source,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       if (activeMessages.length === 0) return;
 
@@ -227,11 +244,13 @@ export const progrevService = {
 
       logger.info('Progrev scheduled for user', {
         telegram_id: from.id,
+        source,
         messages: activeMessages.length,
       });
     } catch (err) {
       logger.error('Failed to schedule progrev for user', {
         telegram_id: from.id,
+        source: from.source,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -249,8 +268,12 @@ export const progrevService = {
       const msg = await progrevRepository.getById(progrevId);
       if (!msg || !msg.is_active) return { scheduled: 0 };
 
+      // Filter users by the progrev's source
       const activeUsers = await usersRepository.listAllActiveUsersForSchedule();
       if (activeUsers.length === 0) return { scheduled: 0 };
+
+      const sourceUsers = activeUsers.filter(u => u.source === msg.source);
+      if (sourceUsers.length === 0) return { scheduled: 0 };
 
       const existingSends = await progrevRepository.listSendsByProgrev(progrevId);
       const existingByUser = new Map(existingSends.map((s) => [s.user_id, s]));
@@ -258,7 +281,7 @@ export const progrevService = {
       const delayMs = progrevDelayToMs(msg.delay_days, msg.delay_hours, msg.delay_minutes);
       const nowMs = Date.now();
 
-      for (const user of activeUsers) {
+      for (const user of sourceUsers) {
         const existing = existingByUser.get(user.id);
         try {
           // Har bir user uchun: started_at + delay
@@ -294,7 +317,8 @@ export const progrevService = {
 
       logger.info('Progrev scheduled for all active users', {
         progrevId,
-        activeUsers: activeUsers.length,
+        source: msg.source,
+        activeUsers: sourceUsers.length,
         scheduled,
       });
     } catch (err) {
@@ -384,6 +408,21 @@ export const progrevService = {
           result.failed++;
           continue;
         }
+        // Source mos kelmasa yubormaymiz (aralashib ketmasligi uchun).
+        // Masalan: instagram userda qolib ketgan VSL reja bekor qilinadi.
+        // Legacy 'vsl1..vsl10' qiymatlar 'vsl' deb hisoblanadi.
+        {
+          const userSrc = normalizeSource(send.user.source) ?? 'instagram';
+          const msgSrc = normalizeSource(msg.source) ?? 'instagram';
+          if (userSrc !== msgSrc) {
+            await progrevRepository.markCancelled(
+              send.id,
+              `source mismatch: progrev=${msg.source} user=${send.user.source}`,
+            );
+            result.cancelled++;
+            continue;
+          }
+        }
 
         const userRow: UserRow = {
           id: send.user.id,
@@ -395,6 +434,7 @@ export const progrevService = {
           started_at: send.user.started_at,
           updated_at: send.user.updated_at,
           created_at: send.user.created_at,
+          source: send.user.source,
         };
 
         const outcome = await safeDeliver(bot, {

@@ -18,12 +18,14 @@ create table if not exists users (
   is_active boolean default true,
   started_at timestamptz default now(),
   updated_at timestamptz default now(),
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  source text
 );
 
 create index if not exists idx_users_telegram_id on users (telegram_id);
 create index if not exists idx_users_is_active on users (is_active);
 create index if not exists idx_users_created_at on users (created_at);
+create index if not exists idx_users_source on users (source);
 
 -- ---------------------------------------------------------
 -- 2. start_messages
@@ -39,11 +41,13 @@ create table if not exists start_messages (
   caption_text text,
   content_type text,
   file_id text,
+  source text not null,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
 
 create index if not exists idx_start_messages_is_active on start_messages (is_active);
+create index if not exists idx_start_messages_source on start_messages (source);
 
 -- ---------------------------------------------------------
 -- 3. broadcasts
@@ -203,6 +207,7 @@ create table if not exists progrev_messages (
   caption_text text,
   content_type text,
   file_id text,
+  source text not null,
   sent_count integer default 0,
   failed_count integer default 0,
   created_at timestamptz default now(),
@@ -211,6 +216,7 @@ create table if not exists progrev_messages (
 
 create index if not exists idx_progrev_messages_is_active on progrev_messages (is_active);
 create index if not exists idx_progrev_messages_created_at on progrev_messages (created_at);
+create index if not exists idx_progrev_messages_source on progrev_messages (source);
 
 -- ---------------------------------------------------------
 -- 10. progrev_sends — qaysi userga qaysi progrev qachon yuborilishi.
@@ -261,3 +267,30 @@ begin
   return v_count;
 end;
 $$ language plpgsql security definer;
+
+-- ---------------------------------------------------------
+-- 12. SOURCE bo'yicha ajratish (VSL1-VSL10 + Instagram)
+--     Mavjud bazaga xavfsiz migratsiya: ustun bo'lmasa qo'shadi.
+--     Supabase SQL Editor'da shu faylni to'liq qayta yurgizsangiz ham
+--     xatolik bermaydi (IF NOT EXISTS).
+-- ---------------------------------------------------------
+alter table users add column if not exists source text;
+alter table start_messages add column if not exists source text not null default 'instagram';
+alter table progrev_messages add column if not exists source text not null default 'instagram';
+
+-- Default'ni olib tashlamaymiz (yangi qatorlar uchun qulay), lekin
+-- eski qatorlarda source bo'sh bo'lsa instagram deb hisoblaymiz:
+update users set source = 'instagram' where source is null;
+
+create index if not exists idx_users_source on users (source);
+create index if not exists idx_start_messages_source on start_messages (source);
+create index if not exists idx_progrev_messages_source on progrev_messages (source);
+
+-- ---------------------------------------------------------
+-- 13. VSL guruhlash: vsl1..vsl10 → bitta 'vsl'
+--     Endi atigi 2 xil source bor: 'vsl' va 'instagram'.
+--     Hamma VSL linklar uchun bitta start xabar + bitta progrev.
+-- ---------------------------------------------------------
+update users set source = 'vsl' where lower(source) like 'vsl%';
+update start_messages set source = 'vsl' where lower(source) like 'vsl%';
+update progrev_messages set source = 'vsl' where lower(source) like 'vsl%';

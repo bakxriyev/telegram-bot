@@ -19,17 +19,20 @@ import {
   progrevKbEditKeyboard,
   formatKbList,
   progrevKeyboardAskKeyboard,
+  sourceSelectionKeyboard,
 } from '../keyboards/progrev.keyboard.js';
 import { backKeyboard } from '../keyboards/admin.keyboard.js';
 import { getAdminState, setAdminState, resetAdminState } from '../state/adminState.js';
 import { detectContentType, extractCaptionOrText, extractFileId, copyToStorage, deliverStorageMessage } from '../services/telegram.service.js';
 import { env } from '../config/env.js';
 import type { BotContext, SessionData, KeyboardButton, ProgrevMessageRow, ContentTypeName } from '../types/index.js';
+import { normalizeSource, sourceDisplayName } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
 function progrevItemText(msg: ProgrevMessageRow): string {
   return [
     `🔥 ${msg.name}`,
+    `📋 Source: ${sourceDisplayName(msg.source)}`,
     '',
     `⏳ Interval: ${formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes)}`,
     `   (start bosgandan keyin)`,
@@ -66,10 +69,28 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
 
   bot.callbackQuery('admin:progrev:add', requireAdmin, async (ctx) => {
     if (!ctx.from) return;
-    setAdminState(ctx.from.id, { step: 'waiting_for_progrev_message' });
-    await ctx.editMessageText('📩 Progrev xabarni botga yuboring yoki kanaldan forward qiling.', {
-      reply_markup: backKeyboard('admin:progrev'),
-    });
+    setAdminState(ctx.from.id, { step: 'waiting_for_progrev_source' });
+    await ctx.editMessageText(
+      '📋 Qaysi manba uchun progrev yaratmoqchisiz?\n\n🎬 VSL (vsl1..vsl10 linklarning HAMMASI uchun bitta) yoki 📸 Instagram — ikkisi alohida saqlanadi:',
+      { reply_markup: sourceSelectionKeyboard('admin:progrev:source') },
+    );
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:progrev:source:(.+)$/, requireAdmin, async (ctx, next) => {
+    // source:set:... edit callbacklari bilan to'qnashmasligi uchun
+    if (ctx.match[1].startsWith('set:')) return next();
+    if (!ctx.from) return;
+    const source = normalizeSource(ctx.match[1]);
+    if (!source) {
+      await ctx.answerCallbackQuery({ text: 'Noto‘g‘ri manba', show_alert: true });
+      return;
+    }
+    setAdminState(ctx.from.id, { step: 'waiting_for_progrev_message', pendingSource: source });
+    await ctx.editMessageText(
+      `✅ Manba tanlandi: ${sourceDisplayName(source)}\n\n📩 Progrev xabarni botga yuboring yoki kanaldan forward qiling.`,
+      { reply_markup: backKeyboard('admin:progrev') },
+    );
     await ctx.answerCallbackQuery();
   });
 
@@ -94,7 +115,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       }
       const now = new Date().toISOString();
       await ctx.reply(
-        `👁 Ko‘rinish: "${msg.name}"\n⏳ ${formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes)} (startdan keyin)`,
+        `👁 Ko‘rinish: "${msg.name}" [${sourceDisplayName(msg.source)}]\n⏳ ${formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes)} (startdan keyin)`,
       );
       await deliverStorageMessage({
         api: bot.api,
@@ -115,6 +136,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
           started_at: now,
           updated_at: now,
           created_at: now,
+          source: msg.source,
         },
       });
     } catch (err) {
@@ -189,6 +211,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       if (ctx.from) resetAdminState(ctx.from.id);
       await ctx.editMessageText(
         `✏️ O‘zgartirish: "${msg.name}"\n\n` +
+          `📋 Source: ${sourceDisplayName(msg.source)}\n` +
           `⏳ Hozir: ${formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes)}\n` +
           `${msg.is_active ? '🟢 Aktiv' : '⚪ O‘chiq'}\n\n` +
           `Nimani o‘zgartiramiz?`,
@@ -199,6 +222,34 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       await ctx.editMessageText('❌ Ma’lumotni olib bo‘lmadi.', { reply_markup: backKeyboard('admin:progrev') });
     }
     await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:progrev:edit:source:(.+)$/, requireAdmin, async (ctx) => {
+    if (!ctx.from) return;
+    const id = ctx.match[1];
+    setAdminState(ctx.from.id, { step: 'waiting_for_progrev_source_edit', editingProgrevId: id });
+    await ctx.editMessageText('📋 Yangi sourceni tanlang (qaysi linkdan kelganlarga yuboriladi?):', {
+      reply_markup: sourceSelectionKeyboard(`admin:progrev:source:set:${id}`),
+    });
+    await ctx.answerCallbackQuery();
+  });
+
+  bot.callbackQuery(/^admin:progrev:source:set:(.+):(.+)$/, requireAdmin, async (ctx) => {
+    const id = ctx.match[1];
+    const source = normalizeSource(ctx.match[2]);
+    if (!source) {
+      await ctx.answerCallbackQuery({ text: 'Noto‘g‘ri manba', show_alert: true });
+      return;
+    }
+    try {
+      await progrevRepository.updateSource(id, source);
+      if (ctx.from) resetAdminState(ctx.from.id);
+      await ctx.answerCallbackQuery({ text: `✅ ${sourceDisplayName(source)}` });
+      await showProgrevItem(ctx, id, true, `\n📋 Source: ${sourceDisplayName(source)} ga o‘zgartirildi`);
+    } catch (err) {
+      logger.error('Failed to update progrev source', { id, err });
+      await ctx.answerCallbackQuery({ text: 'Xatolik', show_alert: true });
+    }
   });
 
   bot.callbackQuery(/^admin:progrev:edit:name:(.+)$/, requireAdmin, async (ctx) => {
@@ -284,6 +335,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       step: 'waiting_for_progrev_keyboard_name',
       pendingChannelMessage: state.pendingChannelMessage,
       pendingProgrevName: state.pendingProgrevName,
+      pendingSource: state.pendingSource,
       pendingProgrevDelay: state.pendingProgrevDelay,
       pendingKeyboardButtons: [],
     });
@@ -378,6 +430,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_delay_days',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: text,
+        pendingSource: state.pendingSource,
       });
       await ctx.reply(
         `✅ Nom: "${text}"\n\n📅 Start bosgandan keyin necha KUN o‘tib yuborilsin?\n\n` +
@@ -397,6 +450,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_delay_hours',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: state.pendingProgrevName,
+        pendingSource: state.pendingSource,
         pendingProgrevDelay: { days, hours: 0, minutes: 0 },
       });
       await ctx.reply(`✅ Kun: ${days}\n\n🕐 Necha SOAT o‘tib yuborilsin?\n\nFaqat son (0–${PROGREV_MAX_HOURS}). Masalan: 2`);
@@ -415,6 +469,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_delay_minutes',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: state.pendingProgrevName,
+        pendingSource: state.pendingSource,
         pendingProgrevDelay: { days: prev.days, hours, minutes: 0 },
       });
       await ctx.reply(
@@ -441,6 +496,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_keyboard_ask',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: state.pendingProgrevName,
+        pendingSource: state.pendingSource,
         pendingProgrevDelay: delay,
         pendingKeyboardButtons: [],
       });
@@ -571,6 +627,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_keyboard_url',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: state.pendingProgrevName,
+        pendingSource: state.pendingSource,
         pendingProgrevDelay: state.pendingProgrevDelay,
         pendingKeyboardButtons: state.pendingKeyboardButtons,
         pendingButtonName: text,
@@ -592,6 +649,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         step: 'waiting_for_progrev_keyboard_name',
         pendingChannelMessage: state.pendingChannelMessage,
         pendingProgrevName: state.pendingProgrevName,
+        pendingSource: state.pendingSource,
         pendingProgrevDelay: state.pendingProgrevDelay,
         pendingKeyboardButtons: buttons,
         pendingButtonName: undefined,
@@ -614,6 +672,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
       const text = extractCaptionOrText(msg);
       const fileId = extractFileId(msg) ?? null;
       const contentType = detectContentType(msg);
+      const prevSource = (getAdminState(ctx.from.id) as SessionData).pendingSource;
 
       setAdminState(ctx.from.id, {
         step: 'waiting_for_progrev_name',
@@ -625,8 +684,11 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
           hasPlaceholder: !!text && /\{name\}|\{username\}/.test(text),
           contentType,
         },
+        pendingSource: prevSource,
       });
-      await ctx.reply('✅ Xabar qabul qilindi!\n\n📝 Endi progrev nomini kiriting (ro‘yxatda ko‘rinadi):');
+      await ctx.reply(
+        `✅ Xabar qabul qilindi! (Source: ${sourceDisplayName(prevSource)})\n\n📝 Endi progrev nomini kiriting (ro‘yxatda ko‘rinadi):`,
+      );
     } catch (err) {
       logger.error('Failed to handle progrev message', { err });
       await ctx.reply('❌ Texnik xatolik yuz berdi.').catch(() => undefined);
@@ -666,6 +728,7 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
     const stored = state.pendingChannelMessage;
     const name = (state.pendingProgrevName ?? '').trim();
     const delay = state.pendingProgrevDelay;
+    const source = normalizeSource(state.pendingSource) ?? 'instagram';
 
     if (!stored || !name || !delay) {
       resetAdminState(ctx.from.id);
@@ -691,15 +754,17 @@ export function registerProgrevHandler(bot: Bot<BotContext>): void {
         caption_text: stored.text,
         content_type: stored.contentType,
         file_id: stored.fileId,
+        source,
       });
       resetAdminState(ctx.from.id);
 
-      // Yangi progrev — barcha active userlarga reja yaratish
+      // Yangi progrev — faqat SHU source dagi active userlarga reja yaratish
       const { scheduled } = await progrevService.scheduleForAllActiveUsers(created.id);
 
       const text =
         `✅ Progrev saqlandi!\n\n` +
         `🔥 ${created.name}\n` +
+        `📋 Source: ${sourceDisplayName(source)}\n` +
         `⏳ ${formatProgrevDelay(delay.days, delay.hours, delay.minutes)} (startdan keyin)\n` +
         `🟢 Aktiv\n\n` +
         `👥 ${scheduled} ta active userga reja yaratildi.`;

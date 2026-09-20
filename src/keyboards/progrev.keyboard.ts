@@ -1,6 +1,8 @@
 import { InlineKeyboard } from 'grammy';
 import { formatProgrevDelay } from '../services/progrev.service.js';
-import type { KeyboardButton, ProgrevMessageRow } from '../types/index.js';
+import type { KeyboardButton, ProgrevMessageRow, SourceType } from '../types/index.js';
+
+export const SOURCES: SourceType[] = ['vsl', 'instagram'];
 
 export function progrevMenuKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
@@ -16,7 +18,7 @@ export function progrevListKeyboard(messages: ProgrevMessageRow[]): InlineKeyboa
   for (const msg of messages) {
     const icon = msg.is_active ? '🟢' : '⚪';
     const delay = formatProgrevDelay(msg.delay_days, msg.delay_hours, msg.delay_minutes);
-    kb.text(`${icon} ${msg.name} (${delay})`, `admin:progrev:pick:${msg.id}`).row();
+    kb.text(`${icon} ${msg.name} (${delay}) [${msg.source}]`, `admin:progrev:pick:${msg.id}`).row();
   }
   kb.text('⬅️ Orqaga', 'admin:progrev');
   return kb;
@@ -45,6 +47,8 @@ export function progrevEditKeyboard(id: string): InlineKeyboard {
     .text('📩 Kontent', `admin:progrev:edit:msg:${id}`)
     .row()
     .text('🔗 Tugmalar', `admin:progrev:edit:kb:${id}`)
+    .row()
+    .text('📋 Source', `admin:progrev:edit:source:${id}`)
     .row()
     .text('⬅️ Orqaga', `admin:progrev:pick:${id}`);
 }
@@ -81,4 +85,20 @@ export function progrevKeyboardAskKeyboard(): {
       ],
     ],
   };
+}
+
+export function sourceSelectionKeyboard(prefix: string): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  kb.text('🎬 VSL', `${prefix}:vsl`).row();
+  kb.text('📸 Instagram', `${prefix}:instagram`).row();
+  kb.text('⬅️ Orqaga', 'admin:progrev');
+  return kb;
+}
+
+export function sourceDisplayName(source: SourceType | null | undefined): string {
+  if (!source) return '(nomaʼlum)';
+  const s = String(source).toLowerCase().trim();
+  if (s.startsWith('vsl')) return 'VSL';
+  if (s === 'instagram') return 'Instagram';
+  return String(source);
 }

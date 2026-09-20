@@ -1,12 +1,13 @@
 import { supabase } from '../supabase.js';
 import { DatabaseError } from '../../utils/errors.js';
-import type { UserRow } from '../../types/index.js';
+import type { UserRow, SourceType } from '../../types/index.js';
 
 export interface UpsertUserInput {
   telegram_id: number;
   username: string | null;
   first_name: string | null;
   last_name: string | null;
+  source?: SourceType | null;
 }
 
 const PAGE_SIZE = 500;
@@ -17,23 +18,38 @@ export const usersRepository = {
    * for repeated /start presses by the same user.
    */
   async upsertByTelegramId(input: UpsertUserInput): Promise<UserRow> {
+    const payload: Record<string, unknown> = {
+      telegram_id: input.telegram_id,
+      username: input.username,
+      first_name: input.first_name,
+      last_name: input.last_name,
+      is_active: true,
+    };
+    // source === undefined bo'lsa — eski source saqlanadi (ustiga yozilmaydi).
+    // /start dan kelganda har doim source beriladi, shuning uchun yangilanadi.
+    if (input.source !== undefined) {
+      payload.source = input.source;
+    }
     const { data, error } = await supabase
       .from('users')
-      .upsert(
-        {
-          telegram_id: input.telegram_id,
-          username: input.username,
-          first_name: input.first_name,
-          last_name: input.last_name,
-          is_active: true,
-        },
-        { onConflict: 'telegram_id' },
-      )
+      .upsert(payload, { onConflict: 'telegram_id' })
       .select('*')
       .single();
 
     if (error) throw new DatabaseError(`Failed to upsert user ${input.telegram_id}`, error);
     return data as UserRow;
+  },
+
+  /**
+   * Update user's source (used when existing user comes from a different source link)
+   */
+  async updateSource(userId: string, source: SourceType): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .update({ source })
+      .eq('id', userId);
+
+    if (error) throw new DatabaseError(`Failed to update user ${userId} source`, error);
   },
 
   async findByTelegramId(telegramId: number): Promise<UserRow | null> {
@@ -104,21 +120,21 @@ export const usersRepository = {
     return ids;
   },
 
-  /** Barcha active userlarning ID va started_at larini qaytaradi (progrev schedule uchun). */
-  async listAllActiveUsersForSchedule(): Promise<{ id: string; started_at: string }[]> {
-    const rows: { id: string; started_at: string }[] = [];
+  /** Barcha active userlarning ID, started_at va source larini qaytaradi (progrev schedule uchun). */
+  async listAllActiveUsersForSchedule(): Promise<{ id: string; started_at: string; source: string | null }[]> {
+    const rows: { id: string; started_at: string; source: string | null }[] = [];
     let from = 0;
     for (;;) {
       const to = from + PAGE_SIZE - 1;
       const { data, error } = await supabase
         .from('users')
-        .select('id, started_at')
+        .select('id, started_at, source')
         .eq('is_active', true)
         .order('created_at', { ascending: true })
         .range(from, to);
 
       if (error) throw new DatabaseError('Failed to list active users for schedule', error);
-      const page = (data as { id: string; started_at: string }[]) ?? [];
+      const page = (data as { id: string; started_at: string; source: string | null }[]) ?? [];
       if (page.length === 0) break;
       for (const r of page) rows.push(r);
       if (page.length < PAGE_SIZE) break;

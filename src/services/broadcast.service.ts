@@ -7,7 +7,7 @@ import { startMessagesRepository } from '../database/repositories/startMessages.
 import { usersRepository } from '../database/repositories/users.repository.js';
 import { safeDeliver } from './telegram.service.js';
 import { logger } from '../utils/logger.js';
-import type { BroadcastRow, ContentTypeName, UserRow, StartMessageRow } from '../types/index.js';
+import type { BroadcastRow, ContentTypeName, UserRow, StartMessageRow, SourceType } from '../types/index.js';
 
 const BATCH_SIZE = 30;
 const BATCH_DELAY_MS = 800;
@@ -43,6 +43,7 @@ export const broadcastService = {
     channelId: number,
     messageId: number,
     captured?: { captionText?: string | null; contentType?: string | null; fileId?: string | null },
+    source?: SourceType,
   ): Promise<StartMessageRow> {
     return startMessagesRepository.create({
       name,
@@ -52,6 +53,7 @@ export const broadcastService = {
       caption_text: captured?.captionText ?? null,
       content_type: captured?.contentType ?? null,
       file_id: captured?.fileId ?? null,
+      source: source ?? 'instagram',
     });
   },
 
