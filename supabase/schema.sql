@@ -300,3 +300,28 @@ update progrev_messages set source = 'vsl' where lower(source) like 'vsl%';
 --     oddiy /start (null). Statistikada "to'g'ridan-to'g'ri" shundan sanaladi.
 -- ---------------------------------------------------------
 alter table users add column if not exists start_param text;
+
+-- ---------------------------------------------------------
+-- 15. ichki_kuch_leads — "Ichki kuch" sayti lidlari (huzur1 bilan bir xil
+--     mantiqda admin panelda statistika/Excel/ro'yxat uchun ishlatiladi).
+-- ---------------------------------------------------------
+create table if not exists public.ichki_kuch_leads (
+  id bigint generated always as identity not null,
+  created_at timestamp with time zone not null default now(),
+  full_name text not null,
+  phone_number text not null,
+  tarif text not null,
+  source text null,
+  constraint ichki_kuch_leads_pkey primary key (id),
+  constraint ichki_kuch_leads_tarif_check check (
+    (tarif = any (array['VIP'::text, 'Premium'::text]))
+  )
+) tablespace pg_default;
+
+create index if not exists idx_ichki_kuch_leads_created_at on public.ichki_kuch_leads (created_at);
+create index if not exists idx_ichki_kuch_leads_source on public.ichki_kuch_leads (source);
+create index if not exists idx_ichki_kuch_leads_tarif on public.ichki_kuch_leads (tarif);
+
+alter table public.ichki_kuch_leads enable row level security;
+-- Policy yaratilmagani uchun anon/authenticated kira olmaydi;
+-- faqat service_role (RLS'ni bypass qiladi) ishlay oladi.

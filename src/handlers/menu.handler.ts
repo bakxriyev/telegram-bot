@@ -7,6 +7,7 @@ import {
   MENU_START,
   MENU_BROADCAST,
   MENU_HUZUR,
+  MENU_ICHKI_KUCH,
   backKeyboard,
 } from '../keyboards/admin.keyboard.js';
 import { startMessageMenuKeyboard } from '../keyboards/startMessage.keyboard.js';
@@ -15,6 +16,7 @@ import { startMessagesRepository } from '../database/repositories/startMessages.
 import { usersMenuKeyboard, buildUsersEntryText } from './users.handler.js';
 import { buildStatsText } from './statistics.handler.js';
 import { huzurMenuKeyboard, buildHuzurEntryText } from './huzur.handler.js';
+import { ichkiKuchMenuKeyboard, buildIchkiKuchEntryText } from './ichkiKuch.handler.js';
 import { logger } from '../utils/logger.js';
 import type { BotContext } from '../types/index.js';
 
@@ -68,6 +70,16 @@ export function registerMenuHandler(bot: Bot<BotContext>): void {
       await ctx.reply(await buildHuzurEntryText(), { reply_markup: huzurMenuKeyboard() });
     } catch (err) {
       logger.error('Menu: failed to open huzur', { err });
+      await ctx.reply('❌ Ma’lumotni olib bo‘lmadi.');
+    }
+  });
+
+  bot.hears(MENU_ICHKI_KUCH, requireAdmin, async (ctx) => {
+    if (ctx.from) resetAdminState(ctx.from.id);
+    try {
+      await ctx.reply(await buildIchkiKuchEntryText(), { reply_markup: ichkiKuchMenuKeyboard() });
+    } catch (err) {
+      logger.error('Menu: failed to open ichki kuch', { err });
       await ctx.reply('❌ Ma’lumotni olib bo‘lmadi.');
     }
   });

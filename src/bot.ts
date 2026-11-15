@@ -12,6 +12,7 @@ import { registerStartMessagesHandler } from './handlers/startMessages.handler.j
 import { registerBroadcastsHandler } from './handlers/broadcasts.handler.js';
 import { registerProgrevHandler } from './handlers/progrev.handler.js';
 import { registerHuzurHandler } from './handlers/huzur.handler.js';
+import { registerIchkiKuchHandler } from './handlers/ichkiKuch.handler.js';
 import { registerStorageCaptureHandler } from './handlers/storageCapture.handler.js';
 
 export function createBot(): Bot<BotContext> {
@@ -31,6 +32,7 @@ export function createBot(): Bot<BotContext> {
   registerBroadcastsHandler(bot);
   registerProgrevHandler(bot);
   registerHuzurHandler(bot);
+  registerIchkiKuchHandler(bot);
   registerStartMessagesHandler(bot);
 
   bot.catch((err) => {

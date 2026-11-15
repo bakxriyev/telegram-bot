@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { formatTashkent } from '../utils/schedule.js';
 import type { UserRow } from '../types/index.js';
 import type { HuzurLeadRow } from '../database/repositories/huzur.repository.js';
+import type { IchkiKuchLeadRow } from '../database/repositories/ichkiKuch.repository.js';
 
 function styleHeader(row: ExcelJS.Row): void {
   row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -78,6 +79,36 @@ export function addLeadRow(sheet: ExcelJS.Worksheet, n: number, lead: HuzurLeadR
     date: formatTashkent(lead.created_at),
     full_name: lead.full_name ?? '',
     phone: lead.phone_number ?? '',
+    source: lead.source?.trim() ? lead.source.trim() : '',
+  });
+}
+
+/** Ichki kuch lidlari jadvali (tarif ustuni bilan). */
+export function createIchkiKuchLeadsWorkbook(): { workbook: ExcelJS.Workbook; sheet: ExcelJS.Worksheet } {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Telegram Bot';
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet('Lidlar');
+  sheet.columns = [
+    { header: '№', key: 'n', width: 6 },
+    { header: 'Sana (Toshkent)', key: 'date', width: 22 },
+    { header: 'F.I.Sh', key: 'full_name', width: 30 },
+    { header: 'Telefon', key: 'phone', width: 22 },
+    { header: 'Tarif', key: 'tarif', width: 14 },
+    { header: 'Manba', key: 'source', width: 20 },
+  ];
+  styleHeader(sheet.getRow(1));
+  autosizeColumns(sheet, [6, 22, 30, 22, 14, 20]);
+  return { workbook, sheet };
+}
+
+export function addIchkiKuchLeadRow(sheet: ExcelJS.Worksheet, n: number, lead: IchkiKuchLeadRow): void {
+  sheet.addRow({
+    n,
+    date: formatTashkent(lead.created_at),
+    full_name: lead.full_name ?? '',
+    phone: lead.phone_number ?? '',
+    tarif: lead.tarif ?? '',
     source: lead.source?.trim() ? lead.source.trim() : '',
   });
 }
